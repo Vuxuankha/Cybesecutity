@@ -7,8 +7,10 @@ No exploitation, credential testing, or automatic remote containment is done her
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import ipaddress
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from webapi.runtime37 import connection, utcnow
 from webapi.security37 import require_role
@@ -21,17 +23,17 @@ STATUSES = {'OPEN', 'INVESTIGATING', 'CONTAINED', 'RESOLVED', 'CLOSED'}
 DEFAULT_DUE_HOURS = {'CRITICAL': 4, 'HIGH': 24, 'MEDIUM': 72, 'LOW': 168}
 
 
-class CaseCreate(BaseModel):
+class CaseCreate(StrictBaseModel):
     title: str = Field(min_length=3, max_length=200)
     priority: str = Field(default='MEDIUM', max_length=16)
     owner: str = Field(default='', max_length=120)
-    asset_ip: str = Field(default='', max_length=64)
+    asset_ip: str = Field(default='', max_length=45)
     summary: str = Field(default='', max_length=4000)
     due_hours: int | None = Field(default=None, ge=1, le=24 * 90)
     alert_id: int | None = Field(default=None, ge=1)
 
 
-class CaseUpdate(BaseModel):
+class CaseUpdate(StrictBaseModel):
     status: str | None = Field(default=None, max_length=24)
     priority: str | None = Field(default=None, max_length=16)
     owner: str | None = Field(default=None, max_length=120)
@@ -39,12 +41,12 @@ class CaseUpdate(BaseModel):
     due_hours: int | None = Field(default=None, ge=1, le=24 * 90)
 
 
-class CaseNote(BaseModel):
+class CaseNote(StrictBaseModel):
     note: str = Field(min_length=1, max_length=8000)
     evidence_ref: str = Field(default='', max_length=500)
 
 
-class AlertLink(BaseModel):
+class AlertLink(StrictBaseModel):
     alert_id: int = Field(ge=1)
 
 
@@ -119,6 +121,16 @@ def _status(value: str) -> str:
     return v
 
 
+def _optional_ip(value: str) -> str:
+    value=(value or '').strip()
+    if not value:
+        return ''
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError as exc:
+        raise HTTPException(400,'INVALID_ASSET_IP') from exc
+
+
 def _due_at(priority: str, due_hours: int | None) -> str:
     hours = int(due_hours or DEFAULT_DUE_HOURS[priority])
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(timespec='seconds')
@@ -177,11 +189,12 @@ def case_create(body: CaseCreate, request: Request):
     ensure_tables55()
     priority = _priority(body.priority)
     now = utcnow()
-    owner = (body.owner or user['username']).strip()
+    owner = body.owner.strip() or user['username']
+    asset_ip = _optional_ip(body.asset_ip)
     with connection() as c:
         cur = c.execute('''INSERT INTO soc_cases55(title,priority,status,owner,asset_ip,summary,opened_by,opened_at,due_at,updated_at)
                            VALUES(?,?,?,?,?,?,?,?,?,?)''',
-                        (body.title.strip(), priority, 'OPEN', owner, body.asset_ip.strip(), body.summary.strip(),
+                        (body.title.strip(), priority, 'OPEN', owner, asset_ip, body.summary.strip(),
                          user['username'], now, _due_at(priority, body.due_hours), now))
         case_id = int(cur.lastrowid)
         if body.alert_id is not None:
@@ -206,12 +219,18 @@ def case_update(case_id: int, body: CaseUpdate, request: Request):
     now = utcnow()
     resolved_at = current['resolved_at']
     closed_at = current['closed_at']
-    if status == 'RESOLVED' and current['status'] != 'RESOLVED':
-        resolved_at = now
-    if status == 'CLOSED' and current['status'] != 'CLOSED':
-        closed_at = now
-    if status not in {'RESOLVED','CLOSED'}:
+    if status in {'OPEN','INVESTIGATING','CONTAINED'}:
+        # Re-opening a case resets terminal-state timestamps so current state and
+        # timestamps cannot contradict each other.
+        resolved_at = None
         closed_at = None
+    elif status == 'RESOLVED':
+        if current['status'] != 'RESOLVED' or not resolved_at:
+            resolved_at = now
+        closed_at = None
+    elif status == 'CLOSED':
+        if current['status'] != 'CLOSED' or not closed_at:
+            closed_at = now
     with connection() as c:
         c.execute('''UPDATE soc_cases55 SET status=?,priority=?,owner=?,summary=?,due_at=?,resolved_at=?,closed_at=?,updated_at=? WHERE id=?''',
                   (status, priority, owner, summary, due_at, resolved_at, closed_at, now, case_id))
@@ -272,7 +291,9 @@ def asset_risk(request: Request, limit: int=1000):
         for ip in sorted(ips)[:limit]:
             alerts = c.execute("""SELECT severity,COUNT(*) n FROM security_alerts51
                                   WHERE asset_ip=? AND status<>'RESOLVED' GROUP BY severity""", (ip,)).fetchall()
-            findings = c.execute("SELECT severity,COUNT(*) n FROM vulnerability_findings51 WHERE asset_ip=? GROUP BY severity", (ip,)).fetchall()
+            findings = c.execute("""SELECT f.severity,COUNT(*) n FROM vulnerability_findings51 f
+                                  WHERE f.asset_ip=? AND f.scan_id=(SELECT MAX(id) FROM vulnerability_scans51 WHERE asset_ip=?)
+                                  GROUP BY f.severity""", (ip,ip)).fetchall()
             a = {str(r['severity']).upper(): int(r['n']) for r in alerts}
             v = {str(r['severity']).upper(): int(r['n']) for r in findings}
             score = min(100,
@@ -297,7 +318,7 @@ def summary(request: Request):
             'critical_cases': n("SELECT COUNT(*) FROM soc_cases55 WHERE status NOT IN ('RESOLVED','CLOSED') AND priority='CRITICAL'"),
             'unassigned_cases': n("SELECT COUNT(*) FROM soc_cases55 WHERE status NOT IN ('RESOLVED','CLOSED') AND trim(owner)=''"),
             'open_alerts': n("SELECT COUNT(*) FROM security_alerts51 WHERE status<>'RESOLVED'"),
-            'vulnerability_findings': n('SELECT COUNT(*) FROM vulnerability_findings51'),
+            'vulnerability_findings': n('''SELECT COUNT(*) FROM vulnerability_findings51 f JOIN (SELECT asset_ip,MAX(id) scan_id FROM vulnerability_scans51 GROUP BY asset_ip) s ON s.asset_ip=f.asset_ip AND s.scan_id=f.scan_id'''),
             'ioc_matches': n('SELECT COUNT(*) FROM ioc_matches54'),
             'generated_at': utcnow(),
             'mode':'defensive-case-management'

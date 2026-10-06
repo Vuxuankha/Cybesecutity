@@ -25,6 +25,7 @@ import time
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from webapi.model37 import StrictBaseModel
 from webapi.runtime37 import VERSION, connection, utcnow
 from webapi import security37
 from webapi.data37 import columns, ip_value, merged_devices, stamp
@@ -46,7 +47,7 @@ security37.WRITE_RULES.extend([
 ])
 
 
-class Strict(BaseModel):
+class Strict(StrictBaseModel):
     model_config = ConfigDict(extra='forbid')
 
 

@@ -124,6 +124,7 @@ WRITE_RULES = [
  ('POST', r'/api/v51/crypto/(encrypt|decrypt)', ('Admin','Analyst','Operator','Viewer')),
  ('POST', r'/api/v51/password-strength', ('Admin','Analyst','Operator','Viewer')),
  ('POST', r'/api/v51/tls/check', ('Admin','Analyst','Operator')),
+ ('PUT', r'/api/v51/settings', ('Admin',)),
  ('POST', r'/api/v51/auth/mfa/reset/\d+', ('Admin',)),
  ('POST', r'/api/v51/alerts/\d+/ack', ('Admin','Analyst','Operator')),
  ('POST', r'/api/v51/alerts/\d+/(resolve|reopen)', ('Admin','Analyst')),
@@ -174,12 +175,16 @@ def ensure_tables():
         CREATE INDEX IF NOT EXISTS ix_web_login_attempts_time ON web_login_attempts37(at);
         CREATE TABLE IF NOT EXISTS web_security_log37(id INTEGER PRIMARY KEY,actor TEXT,method TEXT,path TEXT,status INTEGER,request_id TEXT,created_at TEXT);
         CREATE TABLE IF NOT EXISTS web_mfa_challenges51(
-            token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,purpose TEXT NOT NULL,issued REAL NOT NULL,expires REAL NOT NULL
+            token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,purpose TEXT NOT NULL,issued REAL NOT NULL,expires REAL NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,last_attempt REAL DEFAULT NULL
         );
         CREATE TABLE IF NOT EXISTS web_security_policy51(
             id INTEGER PRIMARY KEY CHECK(id=1),mfa_required INTEGER NOT NULL DEFAULT 1,updated_at TEXT
         );
         ''')
+        mfa_cols={r['name'] for r in c.execute('PRAGMA table_info(web_mfa_challenges51)').fetchall()}
+        if 'attempts' not in mfa_cols: c.execute('ALTER TABLE web_mfa_challenges51 ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0')
+        if 'last_attempt' not in mfa_cols: c.execute('ALTER TABLE web_mfa_challenges51 ADD COLUMN last_attempt REAL DEFAULT NULL')
         # Additive migration for MFA state; secrets are encrypted with the existing credential vault key.
         cols={r['name'] for r in c.execute('PRAGMA table_info(app_users)').fetchall()}
         if 'mfa_enabled' not in cols: c.execute('ALTER TABLE app_users ADD COLUMN mfa_enabled INTEGER DEFAULT 0')
@@ -275,6 +280,21 @@ def _is_loopback_request(request: Request) -> bool:
     return peer in loop and host in loop
 
 
+def _remote_https_required(c=None) -> bool:
+    """Read the persisted remote-session policy; fail secure on any schema/read error."""
+    try:
+        if c is not None:
+            exists=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_settings51'").fetchone()
+            if not exists:
+                return True
+            row=c.execute('SELECT remote_https_required FROM security_settings51 WHERE id=1').fetchone()
+            return True if row is None else bool(row[0])
+        with connection() as conn:
+            return _remote_https_required(conn)
+    except Exception:
+        return True
+
+
 def _finish_login(c,row,request,response):
     now=time.time()
     for old in _session_tokens(request):
@@ -287,8 +307,11 @@ def _finish_login(c,row,request,response):
     # never issued as a non-Secure cookie.
     scheme=str(request.url.scheme).lower()
     if scheme!='https' and not _is_loopback_request(request):
-        c.execute('DELETE FROM web_sessions37 WHERE token_hash=?',(digest(token),))
-        raise HTTPException(403,'HTTPS_REQUIRED_FOR_REMOTE_SESSION')
+        required=_remote_https_required(c)
+        allow_insecure=(not required and os.environ.get('NA_ALLOW_REMOTE_HTTP','0')=='1')
+        if not allow_insecure:
+            c.execute('DELETE FROM web_sessions37 WHERE token_hash=?',(digest(token),))
+            raise HTTPException(403,'HTTPS_REQUIRED_FOR_REMOTE_SESSION')
     cookie_secure=(scheme=='https')
     response.set_cookie(COOKIE,token,httponly=True,secure=cookie_secure,samesite='strict',path='/',max_age=ABSOLUTE_TTL)
     return {'success':True,'user':public_user(row),'csrf_token':csrf}
@@ -361,12 +384,27 @@ def verify_mfa_login(challenge: str,code: str,request: Request,response: Respons
     ensure_tables(); now=time.time()
     with connection() as c:
         ch=c.execute('SELECT * FROM web_mfa_challenges51 WHERE token_hash=?',(digest(challenge or ''),)).fetchone()
-        if not ch or float(ch['expires'])<now: raise HTTPException(401,'MFA_CHALLENGE_EXPIRED')
+        if not ch or float(ch['expires'])<now:
+            raise HTTPException(401,'MFA_CHALLENGE_EXPIRED')
         r=c.execute('SELECT * FROM app_users WHERE id=?',(ch['user_id'],)).fetchone()
-        if not r or not r['enabled'] or not r['mfa_secret_enc']: raise HTTPException(401,'MFA_NOT_AVAILABLE')
-        try: secret=decrypt_secret(r['mfa_secret_enc'])
-        except Exception as exc: raise HTTPException(500,'MFA_SECRET_UNAVAILABLE') from exc
-        if not _verify_totp(secret,code): raise HTTPException(401,'INVALID_MFA_CODE')
+        if not r or not r['enabled'] or not r['mfa_secret_enc']:
+            raise HTTPException(401,'MFA_NOT_AVAILABLE')
+        # The public MFA endpoint can now attribute failed attempts to the account
+        # without exposing the username in the response.
+        request.state.audit_actor=str(r['username'])
+        try:
+            secret=decrypt_secret(r['mfa_secret_enc'])
+        except Exception as exc:
+            raise HTTPException(500,'MFA_SECRET_UNAVAILABLE') from exc
+        if not _verify_totp(secret,code):
+            attempts=int(ch['attempts'] or 0)+1
+            if attempts >= 5:
+                c.execute('DELETE FROM web_mfa_challenges51 WHERE token_hash=?',(digest(challenge),))
+                c.commit()
+                raise HTTPException(429,'MFA_ATTEMPT_LIMIT_REACHED',headers={'Retry-After':'300'})
+            c.execute('UPDATE web_mfa_challenges51 SET attempts=?,last_attempt=? WHERE token_hash=?',(attempts,now,digest(challenge)))
+            c.commit()
+            raise HTTPException(401,'INVALID_MFA_CODE')
         if ch['purpose']=='ENROLL':
             c.execute("UPDATE app_users SET mfa_enabled=1,mfa_updated_at=datetime('now') WHERE id=?",(r['id'],))
             r=c.execute('SELECT * FROM app_users WHERE id=?',(r['id'],)).fetchone()
@@ -446,7 +484,9 @@ def install(app):
                 # Remote sessions must use HTTPS; never downgrade a remote cookie
                 # merely because the current request arrived over http://.
                 if str(request.url.scheme).lower()!='https' and not _is_loopback_request(request):
-                    raise HTTPException(403,'HTTPS_REQUIRED_FOR_REMOTE_SESSION')
+                    required=_remote_https_required()
+                    if required or os.environ.get('NA_ALLOW_REMOTE_HTTP','0')!='1':
+                        raise HTTPException(403,'HTTPS_REQUIRED_FOR_REMOTE_SESSION')
                 if request.method not in ('GET','HEAD','OPTIONS'):
                     origin=request.headers.get('origin')
                     if origin:
@@ -500,7 +540,7 @@ def install(app):
         if path.startswith('/api/') and request.method not in ('GET','HEAD','OPTIONS'):
             try:
                 with connection() as c:
-                    c.execute('INSERT INTO web_security_log37(actor,method,path,status,request_id,created_at) VALUES(?,?,?,?,?,?)',((user or {}).get('username','anonymous'),request.method,path[:200],response.status_code,request_id,utcnow()))
+                    c.execute('INSERT INTO web_security_log37(actor,method,path,status,request_id,created_at) VALUES(?,?,?,?,?,?)',((user or {}).get('username') or getattr(request.state,'audit_actor',None) or 'anonymous',request.method,path[:200],response.status_code,request_id,utcnow()))
             except Exception: pass
         try:
             from webapi.operations47 import record_request

@@ -7,10 +7,29 @@ from modules.nms_v6 import ensure_v6_tables
 
 ROLES = ('Admin', 'Analyst', 'Operator', 'Viewer')
 PUBLIC_FIELDS = ('id', 'username', 'role', 'enabled', 'created_at', 'updated_at')
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 512
+WEAK_PASSWORD_TOKENS = ('password', '123456', 'qwerty', 'admin', 'letmein', 'welcome', 'networkautomation')
 
 
 def public_user(row):
-    return {key: row[key] for key in PUBLIC_FIELDS}
+    out = {key: row[key] for key in PUBLIC_FIELDS}
+    out['enabled'] = bool(out.get('enabled'))
+    return out
+
+
+def validate_password(password: str) -> None:
+    if not isinstance(password, str):
+        raise ValueError('Mật khẩu không hợp lệ.')
+    if not PASSWORD_MIN_LENGTH <= len(password) <= PASSWORD_MAX_LENGTH:
+        raise ValueError(f'Mật khẩu phải có {PASSWORD_MIN_LENGTH}–{PASSWORD_MAX_LENGTH} ký tự.')
+    classes = sum((any(c.islower() for c in password), any(c.isupper() for c in password),
+                   any(c.isdigit() for c in password), any(not c.isalnum() for c in password)))
+    if classes < 3:
+        raise ValueError('Mật khẩu phải kết hợp ít nhất 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.')
+    lowered = password.lower()
+    if any(token in lowered for token in WEAK_PASSWORD_TOKENS):
+        raise ValueError('Mật khẩu chứa từ/cụm quá phổ biến. Hãy chọn mật khẩu khó đoán hơn.')
 
 
 @contextmanager
@@ -56,8 +75,8 @@ def _validate(username, role, password=None):
         raise ValueError('Tên đăng nhập phải có 1–64 ký tự và không chứa khoảng trắng.')
     if role not in ROLES:
         raise ValueError('Vai trò phải là Admin, Analyst, Operator hoặc Viewer.')
-    if password is not None and password == '':
-        raise ValueError('Mật khẩu không được để trống.')
+    if password is not None:
+        validate_password(password)
     return username
 
 

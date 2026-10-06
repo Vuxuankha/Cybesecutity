@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from webapi.runtime37 import connection, sqlite_snapshot, utcnow
 from webapi.security37 import require_role
@@ -211,15 +212,15 @@ def production_status(request: Request):
     }
 
 
-class RetentionItem(BaseModel):
+class RetentionItem(StrictBaseModel):
     table_name: str = Field(max_length=64)
     keep_days: int = Field(ge=7, le=3650)
     enabled: bool = False
 
-class RetentionUpdate(BaseModel):
+class RetentionUpdate(StrictBaseModel):
     policies: list[RetentionItem] = Field(max_length=20)
 
-class RetentionApply(BaseModel):
+class RetentionApply(StrictBaseModel):
     confirmation: str = Field(max_length=64)
     authorized: bool = False
 
@@ -281,7 +282,7 @@ def retention_apply(x: RetentionApply, request: Request):
     return {'success': True, 'deleted': deleted, 'safety_backup': snap.name}
 
 
-class DrExportIn(BaseModel):
+class DrExportIn(StrictBaseModel):
     confirmation: str = Field(max_length=64)
 
 @router.post('/disaster-recovery/export')

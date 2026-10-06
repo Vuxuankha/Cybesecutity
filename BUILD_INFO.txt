@@ -1,3 +1,3 @@
-NetworkAutomation Desktop 7.0.3 Desktop Only - QA25 All Fixed
+NetworkAutomation Desktop 7.0.3 Desktop Only - QA75 All Fixed + Process Cleanup
 Windows Native Network / Localhost UI Engine / No Cloud Runtime
-Asset Revision 70390
+Asset Revision 70391

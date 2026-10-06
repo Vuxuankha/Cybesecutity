@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter,Request,HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel,Field
+from webapi.model37 import StrictBaseModel
 from modules import accounts
 from webapi.runtime37 import connection
 from webapi.security37 import require_role
@@ -14,7 +15,7 @@ from webapi.jobs37 import engine,ROLES,ensure_tables as ensure_job_tables
 
 router=APIRouter()
 
-class JobIn(BaseModel):
+class JobIn(StrictBaseModel):
     operation:Literal['PING','PING_ALL','SERVER_CHECK','SCAN','SNMP','SSH_TEST','AUDIT','CONFIG_BACKUP','DB_BACKUP','REPORT','TOPOLOGY_DISCOVER','WIFI_DIAG','CAMERA_CHECK','INCIDENT_SYNC','RCA_ANALYZE','LAN_PROBE','RESTORE_CONFIG','DAILY_AUDIT']
     device_ids:list[int]=Field(default_factory=list,max_length=128)
     network:str=Field(default='',max_length=48)
@@ -82,15 +83,15 @@ def cancel_job(jid:int,request:Request):
 def diagnostic(request:Request):
     require_role(request,'Admin'); return diagnostics()
 
-class UserIn(BaseModel):
+class UserIn(StrictBaseModel):
     username:str=Field(min_length=1,max_length=64)
-    password:str=Field(default='')
+    password:str=Field(default='',max_length=512)
     role:Literal['Admin','Analyst','Operator','Viewer']='Viewer'
     enabled:bool=True
-class PasswordIn(BaseModel):
-    old_password:str=Field(default='')
-    new_password:str=Field(min_length=1)
-    confirmation:str=Field(default='')
+class PasswordIn(StrictBaseModel):
+    old_password:str=Field(default='',max_length=512)
+    new_password:str=Field(min_length=12,max_length=512)
+    confirmation:str=Field(default='',max_length=512)
 
 def account_call(fn,*args):
     try:return fn(*args)

@@ -13,6 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from app_runtime import BACKUP_DIR
 from webapi.runtime37 import connection, utcnow
@@ -69,7 +70,7 @@ def ensure_tables() -> None:
 
 # ---------------- Topology / dependencies ----------------
 
-class DependencyIn(BaseModel):
+class DependencyIn(StrictBaseModel):
     parent_device_id: int = Field(gt=0)
     child_device_id: int = Field(gt=0)
     relation_type: str = Field(default='Network', max_length=64)
@@ -207,7 +208,7 @@ def discover_topology(device_ids: list[int] | None = None) -> dict:
 
 # ---------------- SLA / maintenance / capacity ----------------
 
-class SlaIn(BaseModel):
+class SlaIn(StrictBaseModel):
     name: str = Field(min_length=1, max_length=120)
     scope_type: Literal['Device','Site','Group','All'] = 'Device'
     scope_id: int | None = None
@@ -217,7 +218,7 @@ class SlaIn(BaseModel):
     enabled: bool = True
     note: str = Field(default='', max_length=500)
 
-class MaintenanceIn(BaseModel):
+class MaintenanceIn(StrictBaseModel):
     name: str = Field(min_length=1, max_length=120)
     scope_type: Literal['Device','Site','Group','All'] = 'Device'
     scope_id: int | None = None
@@ -370,12 +371,12 @@ def delete_maintenance(mid:int,request:Request):
 
 # ---------------- Organization ----------------
 
-class NameIn(BaseModel):
+class NameIn(StrictBaseModel):
     name:str=Field(min_length=1,max_length=120)
     note:str=Field(default='',max_length=500)
     location:str=Field(default='',max_length=255)
 
-class OrgAssignIn(BaseModel):
+class OrgAssignIn(StrictBaseModel):
     site_id:int|None=None
     group_id:int|None=None
     vlan:str=Field(default='',max_length=64)
@@ -476,7 +477,7 @@ def assign_org(device_id:int,x:OrgAssignIn,request:Request):
 
 # ---------------- Incidents / RCA ----------------
 
-class IncidentStateIn(BaseModel):
+class IncidentStateIn(StrictBaseModel):
     status: Literal['Open','Acknowledged','Resolved']
     note: str = Field(default='', max_length=1000)
 
@@ -507,14 +508,14 @@ def incident_state(incident_id:int,x:IncidentStateIn,request:Request):
 
 # ---------------- Wi-Fi / Camera ----------------
 
-class CameraIn(BaseModel):
+class CameraIn(StrictBaseModel):
     name:str=Field(min_length=1,max_length=120)
     host:str=Field(min_length=1,max_length=255)
     port:int=Field(default=554,ge=1,le=65535)
     stream:str=Field(default='',max_length=2000)
     snapshot:str=Field(default='',max_length=2000)
 
-class WifiIn(BaseModel):
+class WifiIn(StrictBaseModel):
     gateway:str=Field(default='',max_length=255)
     internet:str=Field(default='1.1.1.1',max_length=255)
 
@@ -707,7 +708,7 @@ def execute_restore_job(device_id:int,backup_id:int,token:str,confirmation:str,a
 
 SCHEDULE_OPS={'PING','PING_ALL','SERVER_CHECK','SNMP','SSH_TEST','AUDIT','CONFIG_BACKUP','DB_BACKUP','REPORT','TOPOLOGY_DISCOVER','WIFI_DIAG','CAMERA_CHECK','INCIDENT_SYNC','RCA_ANALYZE','LAN_PROBE','DAILY_AUDIT'}
 
-class ScheduleIn(BaseModel):
+class ScheduleIn(StrictBaseModel):
     name:str=Field(min_length=1,max_length=120)
     operation:str
     device_ids:list[int]=Field(default_factory=list,max_length=128)

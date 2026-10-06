@@ -21,6 +21,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, ConfigDict, field_validator
+from webapi.model37 import StrictBaseModel
 from webapi.runtime37 import connection, utcnow
 from webapi.security37 import require_role, WRITE_RULES
 from webapi.data37 import columns, ip_value, write_ping
@@ -48,7 +49,7 @@ WRITE_RULES.extend([
 ])
 
 
-class StrictModel(BaseModel):
+class StrictModel(StrictBaseModel):
     model_config = ConfigDict(extra='forbid')
 
 

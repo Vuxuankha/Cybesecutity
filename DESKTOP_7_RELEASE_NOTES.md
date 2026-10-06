@@ -82,3 +82,23 @@
 - JavaScript syntax: PASS
 - Pytest: **111/111 PASS**
 - Added regression coverage for the reported startup, login, session, asset, dashboard, role, probe and launcher-identity failures.
+
+## QA75 security/data-integrity + process-cleanup patch (2026-10-06)
+
+- Fixed 50 additional issues found by negative/fuzz/static/runtime retesting after QA25.
+- Enforced a consistent strong-password policy on create/reset/change operations (12-512 chars, >=3 character classes, common weak-token rejection).
+- Request models now reject unknown JSON fields and apply practical length/range bounds to authentication, credentials, SNMPv3, server-target and Auto-IP inputs.
+- MFA challenges now track failed attempts per challenge, attribute failures to the account, and invalidate the challenge after 5 incorrect codes.
+- Security reporting uses the correct IOC/server-target tables, unique asset counts, current/latest vulnerability scans, explicit data-unavailable errors, corrupt-snapshot handling and CSV formula-injection protection.
+- SOC case IP validation and reopen/resolve/close timestamps are consistent; custom detection LIKE rules escape SQL wildcard characters.
+- Persisted Cybersecurity settings now control remote HTTPS requirements and VT/NVD integration enablement.
+- Viewer cannot initiate network probes or Kali command/tool checks; Kali HTTP probes no longer disable TLS certificate verification.
+- Nonexistent delete/unassign/history operations now return explicit 404s instead of false-success/empty results.
+- On Windows close, the launcher uses a Job Object with `KILL_ON_JOB_CLOSE` plus a scoped psutil fallback so app-owned child processes (including hidden cmd/PowerShell/WebView helpers) are terminated without touching unrelated user processes.
+- Asset revision bumped to `70391`.
+
+## QA75 verification
+
+- Python compile: PASS
+- Regression suite: **132/132 PASS** before release-gate packaging.
+- New targeted QA75 suite: **21/21 PASS**.

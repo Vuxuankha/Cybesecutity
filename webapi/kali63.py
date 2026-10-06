@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from app_runtime import data_path
 from modules.nms_v5 import encrypt_secret, decrypt_secret
@@ -20,7 +21,7 @@ router = APIRouter(prefix='/api/v1/kali', tags=['Kali Integration'])
 CONFIG_PATH = data_path('kali_integration.json')
 
 
-class KaliConfigIn(BaseModel):
+class KaliConfigIn(StrictBaseModel):
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(default=22, ge=1, le=65535)
     username: str = Field(min_length=1, max_length=128)
@@ -29,7 +30,7 @@ class KaliConfigIn(BaseModel):
     enabled: bool = True
 
 
-class KaliRunIn(BaseModel):
+class KaliRunIn(StrictBaseModel):
     profile: str
     target: str | None = None
     port: int | None = Field(default=None, ge=1, le=65535)
@@ -47,12 +48,20 @@ def _load() -> dict:
         return {'enabled': False}
 
 
+def _safe_port(value, default: int=22) -> int:
+    try:
+        port=int(value or default)
+    except (TypeError, ValueError):
+        return default
+    return port if 1 <= port <= 65535 else default
+
+
 def _public_config(obj: dict | None = None) -> dict:
     obj = obj or _load()
     return {
         'enabled': bool(obj.get('enabled')),
         'host': obj.get('host', ''),
-        'port': int(obj.get('port') or 22),
+        'port': _safe_port(obj.get('port'),22),
         'username': obj.get('username', ''),
         'hostkey_sha256': obj.get('hostkey_sha256', ''),
         'password_saved': bool(obj.get('password_enc')),
@@ -100,7 +109,7 @@ def _connect():
     except Exception as exc:
         raise HTTPException(503, 'PARAMIKO_MISSING') from exc
     host = str(cfg.get('host') or '').strip()
-    port = int(cfg.get('port') or 22)
+    port = _safe_port(cfg.get('port'),22)
     expected = str(cfg.get('hostkey_sha256') or '').strip()
     observed = _probe_hostkey(host, port)['sha256']
     if observed != expected:
@@ -256,7 +265,7 @@ def test_connection(request: Request):
 
 @router.get('/tools')
 def tools(request: Request):
-    require_role(request)
+    require_role(request,'Admin','Operator')
     cmd = "for x in nmap curl openssl tshark tcpdump python3 ss; do if command -v $x >/dev/null 2>&1; then printf '%s=READY\\n' $x; else printf '%s=MISSING\\n' $x; fi; done"
     return _exec(cmd, timeout=15)
 
@@ -277,13 +286,13 @@ def run_profile(body: KaliRunIn, request: Request):
         cmd = "timeout 15 openssl s_client -brief -showcerts -verify_return_error -connect %s:%d </dev/null 2>&1" % (shlex.quote(t), p)
     elif profile == 'web_headers':
         u, resolve_value, _approved_ip = _private_url_target(target)
-        cmd = f"curl -k -sS -D - -o /dev/null --max-time 15 --max-redirs 0 --resolve {shlex.quote(resolve_value)} {shlex.quote(u)}"
+        cmd = f"curl -sS -D - -o /dev/null --max-time 15 --max-redirs 0 --resolve {shlex.quote(resolve_value)} {shlex.quote(u)}"
     elif profile == 'worker_network_state':
         cmd = "ip -brief addr 2>/dev/null; printf '\\n--- routes ---\\n'; ip route 2>/dev/null; printf '\\n--- sockets ---\\n'; ss -tunap 2>/dev/null | head -200"
     elif profile == 'session_cookie_audit':
         # Defensive check only: fetch response headers from an authorized private URL.
         u, resolve_value, _approved_ip = _private_url_target(target)
-        cmd = f"curl -k -sS -D - -o /dev/null --max-time 15 --max-redirs 0 --resolve {shlex.quote(resolve_value)} {shlex.quote(u)}"
+        cmd = f"curl -sS -D - -o /dev/null --max-time 15 --max-redirs 0 --resolve {shlex.quote(resolve_value)} {shlex.quote(u)}"
     elif profile == 'tls_transport_audit':
         # Defensive transport inspection; no interception/MitM is performed.
         t = _private_host(target); p = int(body.port or 443)
@@ -300,7 +309,7 @@ def run_profile(body: KaliRunIn, request: Request):
         cmd = (
             "tmp=$(mktemp); trap 'rm -f \"$tmp\"' EXIT; ok=0; i=0; "
             "while [ $i -lt 10 ]; do "
-            f"t=$(curl -k -sS -o /dev/null --max-time 5 --max-redirs 0 --resolve {q_resolve} -w '%{{time_total}}' {q_url} 2>/dev/null); "
+            f"t=$(curl -sS -o /dev/null --max-time 5 --max-redirs 0 --resolve {q_resolve} -w '%{{time_total}}' {q_url} 2>/dev/null); "
             "rc=$?; [ $rc -eq 0 ] && ok=$((ok+1)); printf '%s\n' \"${t:-0}\" >> \"$tmp\"; "
             "i=$((i+1)); sleep 0.2; done; "
             "awk -v ok=\"$ok\" 'BEGIN{sum=0;max=0;n=0} {v=$1+0;sum+=v;if(v>max)max=v;n++} "

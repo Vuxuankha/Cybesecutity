@@ -205,10 +205,10 @@ def test_static_assets_use_new_revision_and_no_immutable_cache():
     index = text("webapi/static/index.html")
     security = text("webapi/security37.py")
     runtime = text("webapi/runtime37.py")
-    assert "NA_ASSET_VERSION='70390'" in app
-    assert "/static/app.js?v=70390" in index
-    assert "/static/style.css?v=70390" in index
-    assert "ASSET_VERSION='70390'" in runtime
+    assert "NA_ASSET_VERSION='70391'" in app
+    assert "/static/app.js?v=70391" in index
+    assert "/static/style.css?v=70391" in index
+    assert "ASSET_VERSION='70391'" in runtime
     assert "max-age=31536000, immutable" not in security
     assert "no-store, max-age=0" in security
 

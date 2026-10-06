@@ -24,6 +24,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from webapi.runtime37 import connection, utcnow
 from webapi.security37 import require_role, reset_mfa
@@ -38,7 +39,7 @@ SERVICE_NAMES = {22:'ssh',23:'telnet',25:'smtp',53:'dns',80:'http',110:'pop3',13
 SEV_WEIGHT = {'INFO':0,'LOW':5,'MEDIUM':15,'HIGH':30,'CRITICAL':50}
 
 
-class SiemEventIn(BaseModel):
+class SiemEventIn(StrictBaseModel):
     source: str = Field(min_length=1, max_length=80)
     event_type: str = Field(min_length=1, max_length=100)
     severity: str = Field(default='INFO', max_length=16)
@@ -49,45 +50,45 @@ class SiemEventIn(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class VulnScanIn(BaseModel):
+class VulnScanIn(StrictBaseModel):
     asset_ip: str = Field(max_length=45)
     ports: list[int] = Field(default_factory=list)
     timeout_ms: int = Field(default=500, ge=100, le=2500)
 
 
-class CveLookupIn(BaseModel):
+class CveLookupIn(StrictBaseModel):
     cve_id: str = Field(min_length=9, max_length=32)
 
 
-class HashLookupIn(BaseModel):
+class HashLookupIn(StrictBaseModel):
     sha256: str = Field(min_length=64, max_length=64)
 
 
-class PasswordStrengthIn(BaseModel):
+class PasswordStrengthIn(StrictBaseModel):
     password: str = Field(min_length=1, max_length=512)
 
 
-class CryptoEncryptIn(BaseModel):
+class CryptoEncryptIn(StrictBaseModel):
     plaintext: str = Field(max_length=200000)
     passphrase: str = Field(min_length=12, max_length=512)
 
 
-class CryptoDecryptIn(BaseModel):
+class CryptoDecryptIn(StrictBaseModel):
     package: str = Field(max_length=400000)
     passphrase: str = Field(min_length=12, max_length=512)
 
 
-class TlsCheckIn(BaseModel):
+class TlsCheckIn(StrictBaseModel):
     host: str = Field(min_length=1, max_length=253)
     port: int = Field(default=443, ge=1, le=65535)
 
 
-class AlertWorkflowIn(BaseModel):
+class AlertWorkflowIn(StrictBaseModel):
     note: str = Field(default='', max_length=2000)
     owner: str = Field(default='', max_length=120)
 
 
-class VaultCreateIn(BaseModel):
+class VaultCreateIn(StrictBaseModel):
     name: str = Field(min_length=1, max_length=120)
     category: str = Field(default='General', max_length=80)
     username: str = Field(default='', max_length=160)
@@ -96,8 +97,14 @@ class VaultCreateIn(BaseModel):
     note: str = Field(default='', max_length=2000)
 
 
-class VaultRevealIn(BaseModel):
-    code: str = Field(min_length=6, max_length=12)
+class VaultRevealIn(StrictBaseModel):
+    code: str = Field(min_length=6, max_length=6, pattern=r'^\d{6}$')
+
+
+class SecuritySettingsIn(StrictBaseModel):
+    remote_https_required: bool = True
+    vt_enabled: bool = False
+    nvd_enabled: bool = True
 
 
 def _json(value):
@@ -157,6 +164,43 @@ def ensure_tables():
             if name not in cols:
                 c.execute(f'ALTER TABLE security_alerts51 ADD COLUMN {name} {ddl}')
         c.commit()
+
+
+def _table_exists(c, name: str) -> bool:
+    return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def _security_settings(c=None) -> dict:
+    if c is not None:
+        row=c.execute('SELECT remote_https_required,vt_enabled,nvd_enabled FROM security_settings51 WHERE id=1').fetchone()
+        if not row:
+            return {'remote_https_required':True,'vt_enabled':False,'nvd_enabled':True}
+        return {k:bool(row[k]) for k in ('remote_https_required','vt_enabled','nvd_enabled')}
+    with connection() as conn:
+        return _security_settings(conn)
+
+
+def _asset_count(c) -> int:
+    parts=[]
+    if _table_exists(c,'ip_mac_inventory'):
+        parts.append("SELECT trim(ip) asset FROM ip_mac_inventory WHERE trim(COALESCE(ip,''))<>''")
+    if _table_exists(c,'security_assets'):
+        parts.append("SELECT trim(ip) asset FROM security_assets WHERE trim(COALESCE(ip,''))<>''")
+    if not parts:
+        return 0
+    return int(c.execute('SELECT COUNT(*) FROM ('+' UNION '.join(parts)+')').fetchone()[0])
+
+
+def _current_vulnerability_findings_count(c, asset_ip: str | None = None) -> int:
+    if not _table_exists(c,'vulnerability_findings51') or not _table_exists(c,'vulnerability_scans51'):
+        return 0
+    sql='''SELECT COUNT(*) FROM vulnerability_findings51 f
+           JOIN (SELECT asset_ip,MAX(id) scan_id FROM vulnerability_scans51 GROUP BY asset_ip) s
+             ON s.asset_ip=f.asset_ip AND s.scan_id=f.scan_id'''
+    args=()
+    if asset_ip is not None:
+        sql += ' WHERE f.asset_ip=?'; args=(asset_ip,)
+    return int(c.execute(sql,args).fetchone()[0])
 
 
 def _rows(sql, args=()):
@@ -265,18 +309,13 @@ def dashboard(request:Request):
     ensure_tables()
     with connection() as c:
         def count(sql,args=()): return int(c.execute(sql,args).fetchone()[0])
-        assets=0
-        for table in ('security_assets','ip_mac_inventory'):
-            try: assets=max(assets,count(f'SELECT COUNT(*) FROM {table}'))
-            except Exception: pass
+        assets=_asset_count(c)
         open_alerts=count("SELECT COUNT(*) FROM security_alerts51 WHERE status='OPEN'")
         critical=count("SELECT COUNT(*) FROM security_alerts51 WHERE status='OPEN' AND severity='CRITICAL'")
         high=count("SELECT COUNT(*) FROM security_alerts51 WHERE status='OPEN' AND severity='HIGH'")
-        findings=count("SELECT COUNT(*) FROM vulnerability_findings51")
+        findings=_current_vulnerability_findings_count(c)
         failed_24h=count("SELECT COUNT(*) FROM web_login_attempts37 WHERE success=0 AND at>?",(time.time()-86400,))
-        incidents=0
-        try: incidents=count("SELECT COUNT(*) FROM security_incidents WHERE status NOT IN ('CLOSED','RESOLVED')")
-        except Exception: pass
+        incidents=count("SELECT COUNT(*) FROM security_incidents WHERE status NOT IN ('CLOSED','RESOLVED')") if _table_exists(c,'security_incidents') else 0
         score=max(0,100-min(100,critical*35+high*15+min(25,findings)+min(20,failed_24h//2)))
     return {'security_score':score,'assets':assets,'open_alerts':open_alerts,'critical_alerts':critical,'high_alerts':high,
             'vulnerability_findings':findings,'failed_logins_24h':failed_24h,'open_incidents':incidents,
@@ -323,7 +362,7 @@ def alert_ack(alert_id:int, body:AlertWorkflowIn, request:Request):
         row=c.execute('SELECT id,status FROM security_alerts51 WHERE id=?',(alert_id,)).fetchone()
         if not row: raise HTTPException(404,'ALERT_NOT_FOUND')
         if row['status']=='RESOLVED': raise HTTPException(409,'ALERT_ALREADY_RESOLVED')
-        owner=(body.owner or user['username']).strip()
+        owner=body.owner.strip() or user['username']
         c.execute("UPDATE security_alerts51 SET status='ACKNOWLEDGED',owner=?,ack_by=?,ack_at=?,last_seen=last_seen WHERE id=?",(owner,user['username'],now,alert_id)); c.commit()
     return {'ok':True,'id':alert_id,'status':'ACKNOWLEDGED','owner':owner,'actor':user['username']}
 
@@ -334,7 +373,7 @@ def alert_resolve(alert_id:int, body:AlertWorkflowIn, request:Request):
     with connection() as c:
         row=c.execute('SELECT id FROM security_alerts51 WHERE id=?',(alert_id,)).fetchone()
         if not row: raise HTTPException(404,'ALERT_NOT_FOUND')
-        owner=(body.owner or user['username']).strip()
+        owner=body.owner.strip() or user['username']
         c.execute("UPDATE security_alerts51 SET status='RESOLVED',owner=?,resolution_note=?,resolved_by=?,resolved_at=? WHERE id=?",(owner,body.note.strip(),user['username'],now,alert_id)); c.commit()
     return {'ok':True,'id':alert_id,'status':'RESOLVED','owner':owner,'actor':user['username']}
 
@@ -461,6 +500,8 @@ def _http_json(url:str, headers:dict[str,str]|None=None, timeout=8):
 @router.post('/vulnerability/cve/lookup')
 def cve_lookup(body:CveLookupIn, request:Request):
     require_role(request,'Admin','Analyst'); ensure_tables(); cve=body.cve_id.upper().strip()
+    if not _security_settings()['nvd_enabled']:
+        return {'configured':False,'enabled':False,'cve_id':cve,'source':'NVD','note':'NVD lookup is disabled in Cybersecurity settings.'}
     if not re.fullmatch(r'CVE-\d{4}-\d{4,8}',cve): raise HTTPException(400,'INVALID_CVE_ID')
     key='CVE:'+cve; cached=_one('SELECT * FROM threat_lookup_cache51 WHERE lookup_key=?',(key,))
     if cached:
@@ -494,6 +535,8 @@ def cve_lookup(body:CveLookupIn, request:Request):
 def hash_lookup(body:HashLookupIn, request:Request):
     require_role(request,'Admin','Analyst'); ensure_tables(); h=body.sha256.lower().strip()
     if not re.fullmatch(r'[0-9a-f]{64}',h): raise HTTPException(400,'INVALID_SHA256')
+    if not _security_settings()['vt_enabled']:
+        return {'configured':False,'enabled':False,'sha256':h,'source':'VirusTotal','note':'VirusTotal lookup is disabled in Cybersecurity settings.'}
     api_key=os.environ.get('NA_VT_API_KEY','').strip()
     if not api_key: return {'configured':False,'sha256':h,'source':'VirusTotal','note':'Set NA_VT_API_KEY to enable hash reputation lookup. File upload is intentionally not automatic.'}
     try:
@@ -569,7 +612,7 @@ def _allowed_tls_target(host:str):
         raise
     with connection() as c:
         try:
-            row=c.execute('SELECT 1 FROM server_targets WHERE lower(host)=lower(?) LIMIT 1',(host,)).fetchone()
+            row=c.execute('SELECT 1 FROM server_monitor_targets WHERE lower(host)=lower(?) LIMIT 1',(host,)).fetchone()
         except Exception: row=None
     if not row: raise HTTPException(404,'TLS_TARGET_NOT_REGISTERED')
 
@@ -670,36 +713,53 @@ def admin_reset_mfa(user_id:int, request:Request):
     return {'ok':True,'user_id':user_id,'note':'MFA reset. The user must enroll again at next login. Existing application sessions were revoked.','actor':actor['username']}
 
 
+@router.get('/settings')
+def get_security_settings(request:Request):
+    require_role(request,'Admin'); ensure_tables()
+    return _security_settings()
+
+
+@router.put('/settings')
+def update_security_settings(body:SecuritySettingsIn, request:Request):
+    user=require_role(request,'Admin'); ensure_tables()
+    with connection() as c:
+        c.execute('UPDATE security_settings51 SET remote_https_required=?,vt_enabled=?,nvd_enabled=?,updated_at=? WHERE id=1',
+                  (int(body.remote_https_required),int(body.vt_enabled),int(body.nvd_enabled),utcnow()))
+        c.commit()
+    return {'ok':True,'actor':user['username'],**_security_settings()}
+
+
 @router.get('/security-posture')
 def security_posture(request:Request):
     require_role(request); ensure_tables()
-    https=os.environ.get('NA_COOKIE_SECURE','1')!='0'
+    scheme=str(request.url.scheme).lower(); loopback=security37._is_loopback_request(request)
+    secure_transport=(scheme=='https') or loopback
     api_secret=bool(os.environ.get('NA_API_SECRET',''))
-    vt=bool(os.environ.get('NA_VT_API_KEY',''))
-    nvd=bool(os.environ.get('NA_NVD_API_KEY',''))
+    vt_key=bool(os.environ.get('NA_VT_API_KEY','')); nvd_key=bool(os.environ.get('NA_NVD_API_KEY',''))
     with connection() as c:
         users=c.execute('SELECT COUNT(*) FROM app_users WHERE enabled=1').fetchone()[0]
         mfa=c.execute('SELECT COUNT(*) FROM app_users WHERE enabled=1 AND COALESCE(mfa_enabled,0)=1').fetchone()[0]
         argon=c.execute("SELECT COUNT(*) FROM app_users WHERE enabled=1 AND password_hash LIKE '$argon2%'").fetchone()[0]
+        settings=_security_settings(c)
     checks=[
         {'control':'MFA','status':'PASS' if users and mfa==users else 'WARN','evidence':f'{mfa}/{users} active accounts enrolled'},
         {'control':'Argon2id password hashing','status':'PASS' if users and argon==users else 'WARN','evidence':f'{argon}/{users} active accounts migrated; remaining accounts migrate on successful login/password change'},
-        {'control':'Secure cookies / HTTPS mode','status':'PASS' if https else 'WARN','evidence':'NA_COOKIE_SECURE='+('1' if https else '0')},
+        {'control':'Secure cookies / HTTPS mode','status':'PASS' if secure_transport else 'WARN','evidence':('loopback HTTP exception; remote HTTPS required' if loopback and scheme!='https' else f'request scheme={scheme}; remote_https_required={int(settings["remote_https_required"])}')},
         {'control':'API request signing secret','status':'PASS' if api_secret else 'WARN','evidence':'NA_API_SECRET '+('configured' if api_secret else 'not configured for optional v1 token API')},
-        {'control':'VirusTotal integration','status':'PASS' if vt else 'OPTIONAL','evidence':'API key '+('configured' if vt else 'not configured')},
-        {'control':'NVD API key','status':'PASS' if nvd else 'OPTIONAL','evidence':'Lookup works without key at public rate limits; API key is optional'},
+        {'control':'VirusTotal integration','status':'PASS' if settings['vt_enabled'] and vt_key else ('DISABLED' if not settings['vt_enabled'] else 'WARN'),'evidence':('enabled' if settings['vt_enabled'] else 'disabled')+'; API key '+('configured' if vt_key else 'missing')},
+        {'control':'NVD integration','status':'PASS' if settings['nvd_enabled'] else 'DISABLED','evidence':('enabled' if settings['nvd_enabled'] else 'disabled')+'; API key '+('configured' if nvd_key else 'optional/not configured')},
         {'control':'Encrypted Secret Vault','status':'PASS','evidence':'Secrets use the existing credential encryption key; reveal requires Admin + current TOTP'},
         {'control':'SOC alert workflow','status':'PASS','evidence':'Open / acknowledged / resolved lifecycle with owner and resolution note'}]
     return {'checks':checks,'principles':['deny-by-default writes','CSRF protection','same-origin enforcement','request size limits','API rate limiting','MFA step-up for secret reveal','no secret values in audit logs']}
 
 
 # ---- Cybersecurity 5.3: compliance + defensive response orchestration ----
-class ComplianceUpdate53(BaseModel):
+class ComplianceUpdate53(StrictBaseModel):
     status: str = Field(max_length=24)
     evidence: str = Field(default='', max_length=4000)
     owner: str = Field(default='', max_length=120)
 
-class PlaybookCreate53(BaseModel):
+class PlaybookCreate53(StrictBaseModel):
     name: str = Field(min_length=1, max_length=160)
     action_type: str = Field(min_length=1, max_length=60)
     target: str = Field(default='', max_length=255)

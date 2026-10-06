@@ -8,6 +8,7 @@ import json, os, platform, shutil, socket, subprocess, sys, time, ipaddress, thr
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 from webapi.runtime37 import connection, utcnow
 from webapi.security37 import require_role
 from webapi import security37
@@ -21,10 +22,10 @@ security37.WRITE_RULES.extend([
     ('POST', r'/api/v50/startup-discovery/ensure', ('Admin','Operator')),
 ])
 
-class CameraDiagIn(BaseModel):
+class CameraDiagIn(StrictBaseModel):
     timeout_seconds: float = Field(default=5.0, ge=0.5, le=15.0)
 
-class WifiDiagIn(BaseModel):
+class WifiDiagIn(StrictBaseModel):
     gateway: str = Field(default='', max_length=255)
     internet: str = Field(default='1.1.1.1', max_length=255)
 

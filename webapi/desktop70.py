@@ -200,5 +200,7 @@ def network_overview_data(*, probe: bool = True, force: bool = False) -> dict:
 
 @router.get("/network-overview")
 def network_overview(request: Request, probe: bool = True, force: bool = False):
-    security37.require_role(request)
+    user=security37.require_role(request)
+    if probe and user['role']=='Viewer':
+        raise HTTPException(403,'PERMISSION_DENIED: Viewer cannot initiate network probes')
     return network_overview_data(probe=probe, force=force)

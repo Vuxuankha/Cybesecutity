@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from app_runtime import hidden_subprocess_kwargs
 from webapi.runtime37 import connection, utcnow
@@ -249,7 +250,7 @@ def readiness_payload() -> dict[str, Any]:
     }
 
 
-class ProbeIn(BaseModel):
+class ProbeIn(StrictBaseModel):
     authorized: bool = False
 
 
@@ -338,19 +339,19 @@ def lan_probe(x: ProbeIn, request: Request):
     return run_registered_probe()
 
 
-class SnmpV2CredentialIn(BaseModel):
+class SnmpV2CredentialIn(StrictBaseModel):
     name: str = Field(min_length=1, max_length=120)
     community: str = Field(min_length=1, max_length=512)
     port: int = Field(default=161, ge=1, le=65535)
     note: str = Field(default='', max_length=500)
 
-class SnmpV2CredentialUpdate(BaseModel):
+class SnmpV2CredentialUpdate(StrictBaseModel):
     name: str = Field(min_length=1, max_length=120)
     community: str = Field(default='', max_length=512)
     port: int = Field(default=161, ge=1, le=65535)
     note: str = Field(default='', max_length=500)
 
-class BulkAssignIn(BaseModel):
+class BulkAssignIn(StrictBaseModel):
     credential_id: int = Field(gt=0)
     device_ids: list[int] = Field(min_length=1, max_length=128)
 

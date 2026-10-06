@@ -61,7 +61,7 @@ def main():
     check('Installer version', 'NetworkAutomation_Setup_7.0.3' in iss and 'PrivilegesRequired=lowest' in iss)
     check('GitHub Windows build', 'runs-on: windows-latest' in workflow and 'pyinstaller --noconfirm NetworkAutomationDesktop.spec' in workflow)
     check('UI health version aligned', 'r.ui_version!==NA_UI_VERSION' in (ROOT/'webapi/static/operations47.js').read_text(encoding='utf-8') and "ui_version!=='6.9.0'" not in (ROOT/'webapi/static/operations47.js').read_text(encoding='utf-8'))
-    check('Static asset revision aligned', "NA_ASSET_VERSION='70390'" in appjs and '?v=70390' in idx and "ASSET_VERSION='70390'" in runtime and 'r.asset_version!==NA_ASSET_VERSION' in (ROOT/'webapi/static/operations47.js').read_text(encoding='utf-8'))
+    check('Static asset revision aligned', "NA_ASSET_VERSION='70391'" in appjs and '?v=70391' in idx and "ASSET_VERSION='70391'" in runtime and 'r.asset_version!==NA_ASSET_VERSION' in (ROOT/'webapi/static/operations47.js').read_text(encoding='utf-8'))
     check('Static assets cannot remain stale', 'max-age=31536000, immutable' not in sec and "no-store, max-age=0" in sec)
     check('Initial MFA login is self-contained', 'MFA_FLOW_HANDLER_NOT_READY' not in appjs and "'mfa-login-form':async" in appjs and "'/auth/mfa/verify'" in appjs)
     check('Line optimization action is wired', "actions['line-optimize59']" in cyberjs and "'/v59/network/optimize'" in cyberjs)

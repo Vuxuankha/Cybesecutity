@@ -16,20 +16,22 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from webapi.runtime37 import connection, utcnow
 from webapi.security37 import require_role
 from webapi.cybersecurity55 import ensure_tables55
+from webapi.cybersecurity51 import _asset_count, _current_vulnerability_findings_count
 
 router = APIRouter(prefix='/api/v56', tags=['Cybersecurity 5.7'])
 
 
-class NotifyTestIn(BaseModel):
+class NotifyTestIn(StrictBaseModel):
     channel: str = Field(pattern='^(EMAIL|TELEGRAM)$')
     confirm_external: bool = False
 
 
-class AlertDispatchIn(BaseModel):
+class AlertDispatchIn(StrictBaseModel):
     confirm_external: bool = False
 
 
@@ -51,11 +53,31 @@ def ensure_tables56() -> None:
 
 
 def _count(c, sql: str, args=()) -> int:
+    row = c.execute(sql, args).fetchone()
+    return int(row[0] if row is not None else 0)
+
+
+def _table_exists(c, name: str) -> bool:
+    return c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def _decode_snapshot(payload_json: str) -> dict:
     try:
-        row = c.execute(sql, args).fetchone()
-        return int(row[0] if row is not None else 0)
-    except Exception:
-        return 0
+        obj=json.loads(payload_json)
+    except Exception as exc:
+        raise HTTPException(409,'REPORT_PAYLOAD_CORRUPT') from exc
+    if not isinstance(obj, dict):
+        raise HTTPException(409,'REPORT_PAYLOAD_CORRUPT')
+    return obj
+
+
+def _csv_safe(value):
+    if value is None:
+        return ''
+    text=str(value)
+    if text[:1] in ('=', '+', '-', '@'):
+        return "'" + text
+    return text
 
 
 def _notification_status() -> dict:
@@ -99,38 +121,32 @@ def _report_payload() -> dict:
         critical = _count(c, "SELECT COUNT(*) FROM security_alerts51 WHERE status!='RESOLVED' AND severity='CRITICAL'")
         high = _count(c, "SELECT COUNT(*) FROM security_alerts51 WHERE status!='RESOLVED' AND severity='HIGH'")
         medium = _count(c, "SELECT COUNT(*) FROM security_alerts51 WHERE status!='RESOLVED' AND severity='MEDIUM'")
-        findings = _count(c, "SELECT COUNT(*) FROM vulnerability_findings51")
+        findings = _current_vulnerability_findings_count(c)
         open_cases = _count(c, "SELECT COUNT(*) FROM soc_cases55 WHERE status NOT IN ('RESOLVED','CLOSED')")
         breached = 0
-        try:
-            rows = c.execute("SELECT due_at,status FROM soc_cases55 WHERE status NOT IN ('RESOLVED','CLOSED') AND due_at IS NOT NULL").fetchall()
-            now_dt = datetime.now(timezone.utc)
-            for r in rows:
-                try:
-                    d = datetime.fromisoformat(r['due_at'])
-                    if d.tzinfo is None:
-                        d = d.replace(tzinfo=timezone.utc)
-                    if now_dt > d:
-                        breached += 1
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        assets = max(_count(c, 'SELECT COUNT(*) FROM ip_mac_inventory'), _count(c, 'SELECT COUNT(*) FROM security_assets'))
-        iocs = _count(c, 'SELECT COUNT(*) FROM threat_iocs54 WHERE enabled=1')
+        invalid_due_dates = 0
+        rows = c.execute("SELECT due_at,status FROM soc_cases55 WHERE status NOT IN ('RESOLVED','CLOSED') AND due_at IS NOT NULL").fetchall()
+        now_dt = datetime.now(timezone.utc)
+        for r in rows:
+            try:
+                d = datetime.fromisoformat(r['due_at'])
+                if d.tzinfo is None:
+                    d = d.replace(tzinfo=timezone.utc)
+                if now_dt > d:
+                    breached += 1
+            except (TypeError, ValueError):
+                invalid_due_dates += 1
+        assets = _asset_count(c)
+        iocs = _count(c, 'SELECT COUNT(*) FROM ioc_watchlist54 WHERE enabled=1')
         rules = _count(c, 'SELECT COUNT(*) FROM detection_rules54 WHERE enabled=1')
         score = max(0, 100 - min(100, critical*35 + high*15 + medium*5 + min(25, findings) + min(20, breached*5)))
-        top = []
-        try:
-            top = [dict(r) for r in c.execute("""
-                SELECT id,severity,title,asset_ip,status,owner,count,last_seen
-                FROM security_alerts51
-                WHERE status!='RESOLVED'
-                ORDER BY CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END,
-                         last_seen DESC LIMIT 20
-            """).fetchall()]
-        except Exception:
-            pass
+        top = [dict(r) for r in c.execute("""
+            SELECT id,severity,title,asset_ip,status,owner,count,last_seen
+            FROM security_alerts51
+            WHERE status!='RESOLVED'
+            ORDER BY CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END,
+                     last_seen DESC LIMIT 20
+        """).fetchall()]
     return {
         'version': '5.9.2-cybersecurity', 'generated_at': now,
         'security_score': score, 'assets': assets,
@@ -138,6 +154,7 @@ def _report_payload() -> dict:
         'vulnerability_findings': findings, 'open_cases': open_cases,
         'sla_breached_cases': breached, 'active_iocs': iocs,
         'active_detection_rules': rules, 'notification': _notification_status(),
+        'data_warnings': {'invalid_case_due_dates': invalid_due_dates},
         'top_alerts': top,
     }
 
@@ -148,12 +165,15 @@ def notifications_status(request: Request):
     ensure_tables56()
     status = _notification_status()
     with connection() as c:
-        try:
-            status['sent_24h'] = _count(c, "SELECT COUNT(*) FROM notification_log WHERE status='SENT' AND created_at>=datetime('now','-1 day')")
-            status['failed_24h'] = _count(c, "SELECT COUNT(*) FROM notification_log WHERE status='FAILED' AND created_at>=datetime('now','-1 day')")
-        except Exception:
-            status['sent_24h'] = 0
-            status['failed_24h'] = 0
+        if not _table_exists(c,'notification_log'):
+            status.update({'log_available':False,'sent_24h':None,'failed_24h':None})
+        else:
+            try:
+                status['sent_24h'] = _count(c, "SELECT COUNT(*) FROM notification_log WHERE status='SENT' AND created_at>=datetime('now','-1 day')")
+                status['failed_24h'] = _count(c, "SELECT COUNT(*) FROM notification_log WHERE status='FAILED' AND created_at>=datetime('now','-1 day')")
+                status['log_available']=True
+            except Exception as exc:
+                raise HTTPException(503,'NOTIFICATION_LOG_UNAVAILABLE') from exc
     return status
 
 
@@ -163,12 +183,14 @@ def notification_logs(request: Request, limit: int = 300):
     ensure_tables56()
     limit = max(1, min(int(limit), 2000))
     with connection() as c:
+        if not _table_exists(c,'notification_log'):
+            raise HTTPException(503,'NOTIFICATION_LOG_UNAVAILABLE')
         try:
             return [dict(r) for r in c.execute(
                 'SELECT id,event_key,channel,status,detail,created_at FROM notification_log ORDER BY id DESC LIMIT ?',
                 (limit,)).fetchall()]
-        except Exception:
-            return []
+        except Exception as exc:
+            raise HTTPException(503,'NOTIFICATION_LOG_UNAVAILABLE') from exc
 
 
 @router.post('/notifications/test')
@@ -268,7 +290,7 @@ def get_report_snapshot(report_id: int, request: Request):
     if not row:
         raise HTTPException(404, 'REPORT_NOT_FOUND')
     d = dict(row)
-    d['payload'] = json.loads(d.pop('payload_json'))
+    d['payload'] = _decode_snapshot(d.pop('payload_json'))
     return d
 
 
@@ -280,16 +302,16 @@ def export_report_snapshot_csv(report_id: int, request: Request):
         row = c.execute('SELECT * FROM security_report_snapshots56 WHERE id=?', (report_id,)).fetchone()
     if not row:
         raise HTTPException(404, 'REPORT_NOT_FOUND')
-    payload = json.loads(row['payload_json'])
+    payload = _decode_snapshot(row['payload_json'])
     buf = io.StringIO(newline='')
     w = csv.writer(buf)
     w.writerow(['metric', 'value'])
     for key in ('version','generated_at','security_score','assets','critical_alerts','high_alerts','medium_alerts',
                 'vulnerability_findings','open_cases','sla_breached_cases','active_iocs','active_detection_rules'):
-        w.writerow([key, payload.get(key, '')])
+        w.writerow([_csv_safe(key), _csv_safe(payload.get(key, ''))])
     w.writerow([]); w.writerow(['top_alert_id','severity','title','asset_ip','status','owner','count','last_seen'])
     for a in payload.get('top_alerts') or []:
-        w.writerow([a.get('id',''),a.get('severity',''),a.get('title',''),a.get('asset_ip',''),a.get('status',''),a.get('owner',''),a.get('count',''),a.get('last_seen','')])
+        w.writerow([_csv_safe(a.get('id','')),_csv_safe(a.get('severity','')),_csv_safe(a.get('title','')),_csv_safe(a.get('asset_ip','')),_csv_safe(a.get('status','')),_csv_safe(a.get('owner','')),_csv_safe(a.get('count','')),_csv_safe(a.get('last_seen',''))])
     return PlainTextResponse(buf.getvalue(), media_type='text/csv; charset=utf-8',
                              headers={'Content-Disposition': f'attachment; filename="security_snapshot_{report_id}.csv"'})
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 from database.db import DB_PATH, get_connection, init_database, get_device_by_ip
 from modules.device_manager import DeviceManager
 from webapi.data37 import icmp_probe as ping_host
@@ -254,17 +255,23 @@ app.include_router(desktop70.router)
 manager=DeviceManager()
 
 
-class MfaVerify51In(BaseModel):
+class MfaVerify51In(StrictBaseModel):
     challenge: str = Field(min_length=16, max_length=256)
-    code: str = Field(min_length=6, max_length=12)
+    code: str = Field(min_length=6, max_length=6, pattern=r'^\d{6}$')
 
-class ServerTargetIn(BaseModel):
-    name:str; host:str; app_type:str='Custom'; port:int=80; protocol:str='TCP'; service_name:str=''; enabled:bool=True
+class ServerTargetIn(StrictBaseModel):
+    name: str = Field(default='', max_length=120)
+    host: str = Field(min_length=1, max_length=253)
+    app_type: str = Field(default='Custom', max_length=64)
+    port: int = Field(default=80, ge=1, le=65535)
+    protocol: str = Field(default='TCP', max_length=8)
+    service_name: str = Field(default='', max_length=120)
+    enabled: bool = True
 
 
-class DeviceIn(BaseModel):
+class DeviceIn(StrictBaseModel):
     ip:str=Field(max_length=45); hostname:str=Field(default='',max_length=255); mac:str=Field(default='',max_length=64); status:str='Unknown'; duration:float|None=None
-class ScanIn(BaseModel):
+class ScanIn(StrictBaseModel):
     network:str; max_workers:int=32; timeout:int=800
 
 def rows(sql,args=()):
@@ -317,7 +324,9 @@ def _latest_health_map(c):
     try:
         for r in c.execute("SELECT h.* FROM health_samples h JOIN (SELECT host,MAX(id) mid FROM health_samples GROUP BY host) x ON x.mid=h.id").fetchall():
             d=dict(r); out[str(d.get('host') or '')]=d
-    except Exception: pass
+    except Exception as exc:
+        logger.exception('latest health map query failed')
+        raise RuntimeError('HEALTH_DATA_UNAVAILABLE') from exc
     return out
 
 def _latest_ping_map(c):
@@ -326,7 +335,9 @@ def _latest_ping_map(c):
         pc=_cols(c,'ping_results'); ip='ip' if 'ip' in pc else 'ip_address'
         for r in c.execute(f"SELECT p.* FROM ping_results p JOIN (SELECT {ip} ipx,MAX(id) mid FROM ping_results GROUP BY {ip}) x ON x.mid=p.id").fetchall():
             d=dict(r); out[str(d.get(ip) or '')]=d
-    except Exception: pass
+    except Exception as exc:
+        logger.exception('latest ping map query failed')
+        raise RuntimeError('PING_DATA_UNAVAILABLE') from exc
     return out
 
 def _merged_devices():
@@ -709,6 +720,9 @@ def reopen_alert(alert_id:int):
 @app.get('/api/server-targets/{target_id}/history')
 def server_target_history(target_id:int,limit:int=100):
     ensure_server_monitor_tables()
+    with get_connection() as c:
+        if not c.execute('SELECT 1 FROM server_monitor_targets WHERE id=?',(target_id,)).fetchone():
+            raise HTTPException(404,'Không tìm thấy target')
     return rows('SELECT * FROM server_monitor_results WHERE target_id=? ORDER BY id DESC LIMIT ?',(target_id,max(1,min(limit,500))))
 
 @app.put('/api/server-targets/{target_id}')
@@ -779,8 +793,11 @@ def add_server_target(x:ServerTargetIn):
 def delete_server_target(target_id:int):
     ensure_server_monitor_tables()
     with get_connection() as c:
-        c.execute('DELETE FROM server_monitor_results WHERE target_id=?',(target_id,)); cur=c.execute('DELETE FROM server_monitor_targets WHERE id=?',(target_id,)); c.commit()
-        return {'success':cur.rowcount>0}
+        if not c.execute('SELECT 1 FROM server_monitor_targets WHERE id=?',(target_id,)).fetchone():
+            raise HTTPException(404,'Không tìm thấy target')
+        c.execute('DELETE FROM server_monitor_results WHERE target_id=?',(target_id,))
+        c.execute('DELETE FROM server_monitor_targets WHERE id=?',(target_id,)); c.commit()
+        return {'success':True}
 
 @app.post('/api/server-monitor/run')
 def run_server_monitor():
@@ -828,7 +845,7 @@ from app_runtime import REPORT_DIR
 
 AUTO_ENGINE = None
 
-class AutoIPRunIn(BaseModel):
+class AutoIPRunIn(StrictBaseModel):
     authorized: bool = False
     repeat: bool | None = None
     workers: int | None = None
@@ -836,11 +853,11 @@ class AutoIPRunIn(BaseModel):
     backup: bool | None = None
     notifications: bool | None = None
 
-class AuditIn(BaseModel):
+class AuditIn(StrictBaseModel):
     command: str = 'show running-config'
     create_alerts: bool = True
 
-class BackupIn(BaseModel):
+class BackupIn(StrictBaseModel):
     command: str = ''
 
 
@@ -960,8 +977,11 @@ def api_ssh_audit_devices():
 
 @app.get('/api/ssh-audit/history')
 def api_ssh_audit_history(limit:int=200):
-    try:return rows('SELECT * FROM config_audit_history ORDER BY id DESC LIMIT ?',(max(1,min(limit,1000)),))
-    except Exception:return []
+    try:
+        return rows('SELECT * FROM config_audit_history ORDER BY id DESC LIMIT ?',(max(1,min(limit,1000)),))
+    except Exception as exc:
+        logger.exception('ssh audit history query failed')
+        raise HTTPException(503,'SSH_AUDIT_HISTORY_UNAVAILABLE') from exc
 
 @app.post('/api/ssh-audit/{device_id}')
 def api_run_ssh_audit(device_id:int,x:AuditIn):
@@ -1014,8 +1034,11 @@ def api_report_summary():
     devs=_merged_devices()
     with get_connection() as c:
         def count(sql,*args):
-            try:return c.execute(sql,args).fetchone()[0]
-            except Exception:return 0
+            try:
+                return c.execute(sql,args).fetchone()[0]
+            except Exception as exc:
+                logger.exception('report summary query failed')
+                raise HTTPException(503,'REPORT_DATA_UNAVAILABLE') from exc
         ac=_cols(c,'alerts') if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='alerts'").fetchone() else set()
         open_filter="lower(COALESCE(status,'open')) NOT IN ('closed','resolved')" if 'status' in ac else '1'
         if 'resolved' in ac: open_filter += ' AND COALESCE(resolved,0)=0'
@@ -1047,55 +1070,55 @@ from modules.auto_ip import save_profile as save_autoip_profile
 
 _WEB_SESSIONS = {}
 
-class LoginIn(BaseModel):
-    username: str
-    password: str
+class LoginIn(StrictBaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=512)
 
-class CredentialIn(BaseModel):
-    name: str
-    kind: str = 'SSH'
-    username: str = ''
-    secret: str = ''
-    port: int | None = 22
-    note: str = ''
+class CredentialIn(StrictBaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    kind: str = Field(default='SSH', max_length=16)
+    username: str = Field(default='', max_length=160)
+    secret: str = Field(default='', max_length=4096)
+    port: int | None = Field(default=22, ge=1, le=65535)
+    note: str = Field(default='', max_length=2000)
 
-class CredentialAssignIn(BaseModel):
+class CredentialAssignIn(StrictBaseModel):
     credential_id: int
     purpose: str = 'SSH'
 
-class SSHTestIn(BaseModel):
+class SSHTestIn(StrictBaseModel):
     credential_id: int | None = None
 
-class HostTrustIn(BaseModel):
+class HostTrustIn(StrictBaseModel):
     expected_fingerprint: str
     confirm_replace: bool = False
     port: int = 22
 
-class SNMPv3In(BaseModel):
-    name: str
-    username: str
-    security_level: str = 'authPriv'
-    auth_protocol: str = 'SHA'
-    auth_secret: str = ''
-    priv_protocol: str = 'AES128'
-    priv_secret: str = ''
-    context_name: str = ''
-    port: int = 161
-    note: str = ''
+class SNMPv3In(StrictBaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    username: str = Field(min_length=1, max_length=160)
+    security_level: str = Field(default='authPriv', max_length=24)
+    auth_protocol: str = Field(default='SHA', max_length=16)
+    auth_secret: str = Field(default='', max_length=4096)
+    priv_protocol: str = Field(default='AES128', max_length=16)
+    priv_secret: str = Field(default='', max_length=4096)
+    context_name: str = Field(default='', max_length=255)
+    port: int = Field(default=161, ge=1, le=65535)
+    note: str = Field(default='', max_length=2000)
 
-class SNMPv3AssignIn(BaseModel):
+class SNMPv3AssignIn(StrictBaseModel):
     credential_id: int
 
-class AutoIPProfileIn(BaseModel):
-    name: str
-    mode: str = 'assigned'
-    community: str = ''
-    snmpv3_id: int | None = None
-    ssh_id: int | None = None
-    port: int = 161
+class AutoIPProfileIn(StrictBaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    mode: str = Field(default='assigned', max_length=32)
+    community: str = Field(default='', max_length=512)
+    snmpv3_id: int | None = Field(default=None, ge=1)
+    ssh_id: int | None = Field(default=None, ge=1)
+    port: int = Field(default=161, ge=1, le=65535)
 
-class AutoIPTargetProfileIn(BaseModel):
-    profile: str
+class AutoIPTargetProfileIn(StrictBaseModel):
+    profile: str = Field(min_length=1, max_length=120)
 
 
 def _current_user(request:Request):
@@ -1167,10 +1190,12 @@ def api_update_credential(credential_id:int,x:CredentialIn,request:Request):
 def api_delete_credential(credential_id:int,request:Request):
     _require_role(request,'Admin'); ensure_v5_tables()
     with get_connection() as c:
+        if not c.execute('SELECT 1 FROM credentials WHERE id=?',(credential_id,)).fetchone():
+            raise HTTPException(404,'Credential không tồn tại.')
         n=c.execute('SELECT COUNT(*) FROM device_credentials WHERE credential_id=?',(credential_id,)).fetchone()[0]
         if n: raise HTTPException(409,f'Credential đang được gán cho {n} thiết bị. Hãy bỏ gán trước.')
-        c.execute('DELETE FROM secure_backup_jobs WHERE credential_id=?',(credential_id,)); cur=c.execute('DELETE FROM credentials WHERE id=?',(credential_id,)); c.commit()
-        return {'success':cur.rowcount>0}
+        c.execute('DELETE FROM secure_backup_jobs WHERE credential_id=?',(credential_id,)); c.execute('DELETE FROM credentials WHERE id=?',(credential_id,)); c.commit()
+        return {'success':True}
 
 @app.post('/api/devices/{device_id}/credential')
 def api_assign_credential(device_id:int,x:CredentialAssignIn,request:Request):
@@ -1356,9 +1381,11 @@ def api_update_snmpv3(credential_id:int,x:SNMPv3In,request:Request):
 def api_delete_snmpv3(credential_id:int,request:Request):
     _require_role(request,'Admin'); ensure_v12_tables()
     with get_connection() as c:
+        if not c.execute('SELECT 1 FROM snmpv3_credentials WHERE id=?',(credential_id,)).fetchone():
+            raise HTTPException(404,'Credential SNMPv3 không tồn tại.')
         n=c.execute('SELECT COUNT(*) FROM device_snmpv3_assignments WHERE credential_id=?',(credential_id,)).fetchone()[0]
         if n: raise HTTPException(409,f'Credential đang được gán cho {n} thiết bị.')
-        cur=c.execute('DELETE FROM snmpv3_credentials WHERE id=?',(credential_id,)); c.commit(); return {'success':cur.rowcount>0}
+        c.execute('DELETE FROM snmpv3_credentials WHERE id=?',(credential_id,)); c.commit(); return {'success':True}
 
 @app.post('/api/devices/{device_id}/snmpv3')
 def api_assign_snmpv3(device_id:int,x:SNMPv3AssignIn,request:Request):
@@ -1375,7 +1402,9 @@ def api_unassign_snmpv3(device_id:int,request:Request):
         if not c.execute('SELECT id FROM network_devices WHERE id=?',(device_id,)).fetchone():
             raise HTTPException(404,'Không tìm thấy thiết bị.')
         cur=c.execute('DELETE FROM device_snmpv3_assignments WHERE device_id=?',(device_id,)); c.commit()
-    return {'success':cur.rowcount>0}
+        if not cur.rowcount:
+            raise HTTPException(404,'Thiết bị chưa được gán credential SNMPv3.')
+    return {'success':True}
 
 
 @app.get('/api/snmpv3/assignments')
@@ -1401,9 +1430,11 @@ def api_delete_connection_profile(name:str,request:Request):
     _require_role(request,'Admin')
     if name=='Mặc định an toàn': raise HTTPException(400,'Không xóa profile mặc định.')
     with get_connection() as c:
+        if not c.execute('SELECT 1 FROM autoip_profiles WHERE name=?',(name,)).fetchone():
+            raise HTTPException(404,'Profile không tồn tại.')
         n=c.execute('SELECT COUNT(*) FROM autoip_targets WHERE profile=?',(name,)).fetchone()[0]
         if n: raise HTTPException(409,f'Profile đang được {n} target sử dụng.')
-        cur=c.execute('DELETE FROM autoip_profiles WHERE name=?',(name,)); c.commit(); return {'success':cur.rowcount>0}
+        c.execute('DELETE FROM autoip_profiles WHERE name=?',(name,)); c.commit(); return {'success':True}
 
 @app.post('/api/autoip/targets/{ip}/profile')
 def api_assign_target_profile(ip:str,x:AutoIPTargetProfileIn,request:Request):
@@ -1418,7 +1449,7 @@ def api_assign_target_profile(ip:str,x:AutoIPTargetProfileIn,request:Request):
 # --- v3.4 operational readiness & controlled batch operations ---
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-class BatchOpsIn(BaseModel):
+class BatchOpsIn(StrictBaseModel):
     device_ids: list[int]
     authorized: bool = False
     create_alerts: bool = True

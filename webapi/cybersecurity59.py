@@ -20,6 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from modules.icmp_probe import icmp_ping
 from webapi.platform50 import network_connectivity, network_identity_status
@@ -33,14 +34,14 @@ DEFAULT_UPLOAD_URL = os.environ.get('NA_SPEEDTEST_UPLOAD_URL', 'https://speed.cl
 PUBLIC_PROBE = os.environ.get('NA_LINE_PUBLIC_PROBE', '1.1.1.1')
 
 
-class SpeedTestIn(BaseModel):
+class SpeedTestIn(StrictBaseModel):
     download_mb: int = Field(default=5, ge=1, le=25)
     upload_mb: int = Field(default=2, ge=1, le=10)
     run_upload: bool = True
     confirm_bandwidth_use: bool = False
 
 
-class OptimizeLineIn(BaseModel):
+class OptimizeLineIn(StrictBaseModel):
     confirm_system_change: bool = False
 
 

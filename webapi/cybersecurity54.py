@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from webapi.runtime37 import connection, utcnow
 from webapi.security37 import require_role
@@ -21,7 +22,7 @@ from webapi.cybersecurity51 import ensure_tables53, _rows, _upsert_alert, SEV_WE
 router = APIRouter(prefix='/api/v54', tags=['Cybersecurity 5.4'])
 
 
-class IOCIn(BaseModel):
+class IOCIn(StrictBaseModel):
     indicator_type: str = Field(min_length=2, max_length=16)
     indicator: str = Field(min_length=2, max_length=512)
     severity: str = Field(default='HIGH', max_length=16)
@@ -30,7 +31,7 @@ class IOCIn(BaseModel):
     note: str = Field(default='', max_length=2000)
 
 
-class DetectionRuleIn(BaseModel):
+class DetectionRuleIn(StrictBaseModel):
     name: str = Field(min_length=1, max_length=160)
     source: str = Field(default='', max_length=80)
     event_type: str = Field(default='', max_length=100)
@@ -225,8 +226,9 @@ def correlate_event54(event_id: int, event: dict) -> dict:
                 clauses.append('severity IN (' + ','.join('?' for _ in allowed) + ')')
                 args.extend(allowed)
             if needle:
-                clauses.append('lower(message) LIKE ?')
-                args.append('%' + needle + '%')
+                escaped=needle.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')
+                clauses.append("lower(message) LIKE ? ESCAPE '\\'")
+                args.append('%' + escaped + '%')
             count = int(c.execute(
                 'SELECT COUNT(*) FROM siem_events51 WHERE ' + ' AND '.join(clauses), args
             ).fetchone()[0])

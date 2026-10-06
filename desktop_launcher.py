@@ -23,11 +23,107 @@ import time
 import urllib.request
 import json
 import secrets
+import atexit
 from pathlib import Path
 
 APP_TITLE = "NetworkAutomation Desktop 7.0.3"
 
 WEBVIEW2_CLIENT_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+
+# Keep a Windows Job Object handle alive for the lifetime of the desktop app.
+# JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE guarantees that helper descendants created
+# by this app (cmd.exe, powershell.exe, WebView2 helpers, etc.) cannot remain
+# orphaned after the main process exits. It never targets unrelated system/user
+# processes because only this process tree is assigned to the job.
+_PROCESS_JOB_HANDLE = None
+
+
+def _install_process_cleanup_job() -> bool:
+    global _PROCESS_JOB_HANDLE
+    if os.name != 'nt' or _PROCESS_JOB_HANDLE is not None:
+        return bool(_PROCESS_JOB_HANDLE) if os.name == 'nt' else True
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+        JobObjectExtendedLimitInformation = 9
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ('ReadOperationCount', ctypes.c_ulonglong), ('WriteOperationCount', ctypes.c_ulonglong),
+                ('OtherOperationCount', ctypes.c_ulonglong), ('ReadTransferCount', ctypes.c_ulonglong),
+                ('WriteTransferCount', ctypes.c_ulonglong), ('OtherTransferCount', ctypes.c_ulonglong),
+            ]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ('PerProcessUserTimeLimit', ctypes.c_longlong), ('PerJobUserTimeLimit', ctypes.c_longlong),
+                ('LimitFlags', wintypes.DWORD), ('MinimumWorkingSetSize', ctypes.c_size_t),
+                ('MaximumWorkingSetSize', ctypes.c_size_t), ('ActiveProcessLimit', wintypes.DWORD),
+                ('Affinity', ctypes.c_size_t), ('PriorityClass', wintypes.DWORD),
+                ('SchedulingClass', wintypes.DWORD),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION), ('IoInfo', IO_COUNTERS),
+                ('ProcessMemoryLimit', ctypes.c_size_t), ('JobMemoryLimit', ctypes.c_size_t),
+                ('PeakProcessMemoryUsed', ctypes.c_size_t), ('PeakJobMemoryUsed', ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            return False
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(handle, JobObjectExtendedLimitInformation,
+                                                ctypes.byref(info), ctypes.sizeof(info)):
+            kernel32.CloseHandle(handle)
+            return False
+        if not kernel32.AssignProcessToJobObject(handle, kernel32.GetCurrentProcess()):
+            # Some managed/enterprise launchers may already impose a non-nestable
+            # job. Keep the safe psutil fallback below instead of killing globally.
+            kernel32.CloseHandle(handle)
+            return False
+        _PROCESS_JOB_HANDLE = handle
+        return True
+    except Exception:
+        return False
+
+
+def _terminate_child_processes() -> None:
+    """Best-effort fallback cleanup for descendants owned by this app only."""
+    if os.name != 'nt':
+        return
+    try:
+        import psutil
+        parent = psutil.Process(os.getpid())
+        children = parent.children(recursive=True)
+        for child in children:
+            try:
+                child.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        _gone, alive = psutil.wait_procs(children, timeout=2.5)
+        for child in alive:
+            try:
+                child.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except Exception:
+        pass
 
 
 def _webview2_runtime_version() -> str:
@@ -343,6 +439,8 @@ def _run_desktop_window(port: int, url: str, reserved_socket: socket.socket) -> 
 
 def main() -> int:
     _configure_environment()
+    _install_process_cleanup_job()
+    atexit.register(_terminate_child_processes)
     mutex = _single_instance()
     if mutex is None:
         _show_error(APP_TITLE, "NetworkAutomation Desktop đang chạy. Chỉ mở một phiên trên mỗi máy.")
@@ -367,6 +465,8 @@ def main() -> int:
         except OSError: pass
         _show_error(APP_TITLE, f"Không thể mở giao diện Desktop.\n\n{exc}")
         return 1
+    finally:
+        _terminate_child_processes()
 
 
 if __name__ == "__main__":

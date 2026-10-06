@@ -11,7 +11,7 @@ import uuid
 VERSION='5.9.2-cybersecurity'
 UI_VERSION='7.0.3'
 RELEASE='Desktop 7.0.3 Desktop Only'
-ASSET_VERSION='70390'
+ASSET_VERSION='70391'
 SERVICE = 'networkautomation-desktop'
 MIGRATION_MARKER = '.desktop_migration_37.json'
 LEGACY_MIGRATION_MARKERS = ('.desktop_migration.json', '.web_migration_37.json')

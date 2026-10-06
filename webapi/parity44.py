@@ -16,6 +16,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from webapi.model37 import StrictBaseModel
 
 from app_runtime import BACKUP_DIR, DATA_DIR, resource_path, hidden_subprocess_kwargs
 from webapi.runtime37 import connection, utcnow
@@ -81,7 +82,7 @@ def _num(value):
 
 
 # ---------------- Device profiles / vendor drivers ----------------
-class ProfileIn(BaseModel):
+class ProfileIn(StrictBaseModel):
     name: str = Field(min_length=1, max_length=120)
     vendor: str = Field(default='', max_length=120)
     match_text: str = Field(default='', max_length=500)
@@ -92,11 +93,11 @@ class ProfileIn(BaseModel):
     lldp_mode: Literal['LLDP','LLDP/CDP','CDP','None'] = 'LLDP'
     note: str = Field(default='', max_length=1200)
 
-class AssignIn(BaseModel):
+class AssignIn(StrictBaseModel):
     device_id: int = Field(gt=0)
     target_id: int = Field(gt=0)
 
-class DriverIn(BaseModel):
+class DriverIn(StrictBaseModel):
     name: str = Field(min_length=1, max_length=120)
     vendor: str = Field(default='', max_length=120)
     priority: int = Field(default=50, ge=0, le=1000)
@@ -280,10 +281,10 @@ def auto_driver(device_id:int,request:Request):
 
 
 # ---------------- Secure SNMP resource / port monitoring ----------------
-class ResourcePollIn(BaseModel):
+class ResourcePollIn(StrictBaseModel):
     authorized: bool = False
 
-class InterfacePollIn(BaseModel):
+class InterfacePollIn(StrictBaseModel):
     ifindices: list[int] = Field(min_length=1,max_length=32)
     authorized: bool = False
 
@@ -375,7 +376,7 @@ def poll_interfaces(device_id:int,x:InterfacePollIn,request:Request):
 
 
 # ---------------- Alert rules ----------------
-class AlertRuleIn(BaseModel):
+class AlertRuleIn(StrictBaseModel):
     name:str=Field(min_length=1,max_length=160)
     host:str=Field(default='',max_length=255)
     metric:Literal['CPU %','RAM %','Mất gói %','Độ trễ ms','Lỗi cổng IN','Lỗi cổng OUT']
@@ -421,7 +422,7 @@ def evaluate_rules(request:Request):
 
 
 # ---------------- Notifications ----------------
-class NotificationSettingsIn(BaseModel):
+class NotificationSettingsIn(StrictBaseModel):
     notify_enabled:bool=False; notify_telegram:bool=True; notify_email:bool=False
     notify_offline:bool=True; notify_drift:bool=True; notify_security:bool=True; notify_daily_audit:bool=True
     notify_cooldown_min:int=Field(default=60,ge=0,le=10080)
@@ -433,7 +434,7 @@ class NotificationSettingsIn(BaseModel):
     smtp_password:str=Field(default='',max_length=1000)
     smtp_to:str=Field(default='',max_length=512)
 
-class NotificationTestIn(BaseModel):
+class NotificationTestIn(StrictBaseModel):
     channel:Literal['Telegram','Email']
     authorized:bool=False
 
@@ -483,13 +484,13 @@ def test_notification(x:NotificationTestIn,request:Request):
 
 
 # ---------------- Service impact ----------------
-class ServiceIn(BaseModel):
+class ServiceIn(StrictBaseModel):
     name:str=Field(min_length=1,max_length=160)
     description:str=Field(default='',max_length=1000)
     owner:str=Field(default='',max_length=160)
     enabled:bool=True
 
-class MembersIn(BaseModel):
+class MembersIn(StrictBaseModel):
     required_ids:list[int]=Field(default_factory=list,max_length=256)
     optional_ids:list[int]=Field(default_factory=list,max_length=256)
 
@@ -544,7 +545,7 @@ def update_members(service_id:int,x:MembersIn,request:Request):
 
 
 # ---------------- Manual text backup ----------------
-class ManualBackupIn(BaseModel):
+class ManualBackupIn(StrictBaseModel):
     device_name:str=Field(min_length=1,max_length=120)
     note:str=Field(default='',max_length=500)
     content:str=Field(min_length=1,max_length=48000)
@@ -564,14 +565,14 @@ def manual_backup(x:ManualBackupIn,request:Request):
         cur=c.execute('INSERT INTO config_backups(device_name,source,file_path,size_bytes,note,created_at) VALUES(?,?,?,?,?,?)',(x.device_name.strip(),'Desktop pasted configuration',str(path),path.stat().st_size,x.note.strip(),_now()))
     return {'success':True,'id':cur.lastrowid,'filename':path.name,'size_bytes':path.stat().st_size}
 
-class PostureIn(BaseModel):
+class PostureIn(StrictBaseModel):
     backup_id:int=Field(gt=0)
 
 # ---------------- Config compare / baselines ----------------
-class CompareIn(BaseModel):
+class CompareIn(StrictBaseModel):
     backup_a:int=Field(gt=0); backup_b:int=Field(gt=0)
 
-class BaselineFromBackupIn(BaseModel):
+class BaselineFromBackupIn(StrictBaseModel):
     backup_id:int=Field(gt=0)
     device:str=Field(min_length=1,max_length=255)
 
@@ -654,7 +655,7 @@ def delete_baseline(device:str,request:Request):
 
 
 # ---------------- Settings / remote tools ----------------
-class SettingsIn(BaseModel):
+class SettingsIn(StrictBaseModel):
     default_network:str='192.168.1.0/24'
     ping_timeout_ms:int=Field(default=1000,ge=100,le=60000)
     ping_interval_sec:int=Field(default=5,ge=1,le=3600)
@@ -680,7 +681,7 @@ def settings_put(x:SettingsIn,request:Request):
     for k,v in x.model_dump().items(): set_setting(k,'1' if isinstance(v,bool) and v else '0' if isinstance(v,bool) else str(v).strip())
     return {'success':True}
 
-class RemoteCheckIn(BaseModel):
+class RemoteCheckIn(StrictBaseModel):
     service:Literal['SSH','TELNET','RDP','HTTP','HTTPS']
     authorized:bool=False
 

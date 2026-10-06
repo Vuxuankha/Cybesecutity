@@ -1,7 +1,7 @@
 'use strict';
 const $=s=>document.querySelector(s), esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const state={uiReady:false,assetsReady:false,backendReady:false,user:null,csrf:'',page:'dashboard',cache:[],busy:false,actionCount:0,render:0,live:true,setupDeviceId:null,groupOpen:{},operation:null,jobWatchToken:0,lastHealthAt:0};
-const NA_UI_VERSION='7.0.3', NA_RELEASE='Desktop 7.0.3 Desktop Only', NA_ASSET_VERSION='70390';
+const NA_UI_VERSION='7.0.3', NA_RELEASE='Desktop 7.0.3 Desktop Only', NA_ASSET_VERSION='70391';
 const naFeatureStyles=['workbench45.css','vendor/xterm.css','terminal46.css','operations47.css','operations50.css','cybersecurity51.css','enterprise592.css','enterprise600.css','security_modes61.css'];
 const naFeatureScripts=['workbench45.js','vendor/xterm.js','live46.js','terminal46.js','operations47.js','operations50.js','cybersecurity51.js','enterprise592.js','enterprise600.js','security_modes61.js','security_catalog62.js','kali63.js','hotfix9_kali_red.js','hotfix10_nav_core.js','desktop70.js',];
 let naFeatureAssetsPromise=null;

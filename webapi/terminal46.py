@@ -24,6 +24,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
+from webapi.model37 import StrictBaseModel
 from webapi import security37
 from webapi.runtime37 import connection, utcnow, VERSION
 from modules.terminal_transport import SSHTransport, TelnetTransport
@@ -41,7 +42,7 @@ SESSION_SECONDS = 8*3600
 AUTH_CHECK_SECONDS = 2
 
 
-class ConnectIn(BaseModel):
+class ConnectIn(StrictBaseModel):
     model_config = ConfigDict(extra='forbid')
     device_id: int | None = Field(default=None, gt=0)
     target_ip: str = Field(default='', max_length=45)
