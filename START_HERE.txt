@@ -1,0 +1,18 @@
+NETWORKAUTOMATION DESKTOP 7.0.3 - KHOI DONG
+
+1. Giai nen TOAN BO file ZIP ra mot thu muc moi.
+2. Double-click: 00_MO_APP_NETWORKAUTOMATION.vbs
+3. KHONG mo cac file .bat trong thu muc _internal\launcher.
+
+Moi truong Python cua app duoc luu rieng trong:
+%LOCALAPPDATA%\NetworkAutomation\venvs
+
+App KHONG xoa .venv cu nam canh source, vi thu muc do co the bi Windows/antivirus khoa.
+Log khoi dong:
+runtime_data\logs\desktop_bootstrap.log
+
+FAST START QA25 - ALL FIXED
+- Lan mo dau tien / sau nang cap co the cham hon de cai dependency va migrate.
+- Cac lan mo sau se dung venv da xac thuc, bo qua do Python/import dependency nang.
+- Cua so ung dung duoc tao ngay voi man hinh khoi dong. UI dang nhap chi duoc mo khi cac dich vu nen quan trong da san sang.
+- Neu mot module giao dien tai loi sau dang nhap, session van duoc giu va app cho phep tai lai module thay vi day nguoi dung ve Login.

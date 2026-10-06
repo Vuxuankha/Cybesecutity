@@ -1,0 +1,35 @@
+KHUYEN DUNG: double-click 00_MO_APP_NETWORKAUTOMATION.vbs. KHONG chay file .bat trong _internal\launcher.
+
+HƯỚNG DẪN KHỞI ĐỘNG NETWORKAUTOMATION DESKTOP 7.0.3
+
+1. Giải nén TOÀN BỘ file ZIP ra một thư mục bình thường trên Windows.
+   Không chạy trực tiếp file bên trong WinRAR/7-Zip.
+
+2. Mở file:
+   00_MO_APP_NETWORKAUTOMATION.vbs
+
+   Đây là launcher khuyến nghị vì không hiện cửa sổ CMD.
+
+3. Nếu máy chưa có Python tương thích:
+   - Ứng dụng hỗ trợ Python 3.11, 3.12 hoặc 3.13.
+   - Launcher sẽ hỏi có muốn tự động cài Python 3.12 bằng winget hay không.
+   - Chọn Yes nếu muốn ứng dụng tự cài và thử khởi động lại.
+
+4. Lần chạy đầu, ứng dụng sẽ tạo môi trường Python riêng trong %LOCALAPPDATA%\NetworkAutomation\venvs và cài các thư viện cần thiết.
+   Quá trình này có thể mất vài phút và cần Internet.
+
+5. Nếu vẫn lỗi, mở file log:
+   runtime_data\logs\desktop_bootstrap.log
+   và gửi nội dung log để kiểm tra.
+
+MÃ LỖI BOOTSTRAP
+11 = Không tìm thấy Python 3.11/3.12/3.13
+12 = Không tạo được môi trường Python mới
+13 = Không cập nhật được pip
+14 = Không cài được dependency
+15 = Không tạo được thư mục môi trường trong LOCALAPPDATA/TEMP
+
+6. FAST START QA93
+   - Lần chạy đầu hoặc sau nâng cấp vẫn có thể mất thời gian để tạo môi trường/migrate.
+   - Từ lần mở tiếp theo, launcher dùng venv đã xác thực trong LOCALAPPDATA và bỏ qua bước dò Python/import dependency nặng.
+   - Cửa sổ Desktop được hiển thị trước; backend/worker nền tiếp tục warm-up song song.
