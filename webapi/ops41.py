@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import json
 import os
 import platform
@@ -29,6 +30,7 @@ RETENTION_TABLES = {
     'web_security_log37': ('created_at',),
     'web_operation_runs': ('created_at', 'started_at'),
     'web_operation_results': ('created_at',),
+    'web_scan_results': ('created_at',),
 }
 DEFAULT_RETENTION = {
     'ping_results': 90,
@@ -38,6 +40,7 @@ DEFAULT_RETENTION = {
     'web_security_log37': 365,
     'web_operation_runs': 180,
     'web_operation_results': 180,
+    'web_scan_results': 90,
 }
 
 
@@ -103,12 +106,17 @@ def _latest_file_age(paths):
 
 def _dir_size(path: Path):
     total = 0
-    try:
-        for p in path.rglob('*'):
-            if p.is_file():
+    if not path.exists():
+        return 0
+    def _walk_error(exc):
+        logging.getLogger(__name__).warning('Directory size traversal error under %s: %s', path, exc)
+    for root, _dirs, files in os.walk(path, onerror=_walk_error):
+        for name in files:
+            p = Path(root) / name
+            try:
                 total += p.stat().st_size
-    except Exception:
-        pass
+            except OSError as exc:
+                logging.getLogger(__name__).warning('Cannot stat %s while measuring directory size: %s', p, exc)
     return total
 
 
@@ -319,11 +327,15 @@ def retention_apply(x: RetentionApply, request: Request):
         raise HTTPException(400, 'Type APPLY RETENTION and confirm authorization')
     from database.db import DB_PATH
     from app_runtime import BACKUP_DIR
+    with connection() as c:
+        preview = _retention_preview(c)
+    actionable=[p for p in preview if p['enabled'] and p['timestamp_column'] and p['would_delete']]
+    if not actionable:
+        return {'success': True, 'deleted': {}, 'safety_backup': None}
     snap = Path(BACKUP_DIR) / ('pre_retention_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + secrets.token_hex(4) + '.db')
     sqlite_snapshot(Path(DB_PATH), snap)
     deleted = {}
     with connection() as c:
-        preview = _retention_preview(c)
         c.execute('BEGIN IMMEDIATE')
         for p in preview:
             if not p['enabled'] or not p['timestamp_column'] or not p['would_delete']:

@@ -1,7 +1,7 @@
 NETWORKAUTOMATION DESKTOP 7.0.3 - KHOI DONG
 
 1. Giai nen TOAN BO file ZIP ra mot thu muc moi.
-2. Double-click: 00_MO_APP_NETWORKAUTOMATION.vbs
+2. Double-click: app.vbs
 3. KHONG mo cac file .bat trong thu muc _internal\launcher.
 
 Moi truong Python cua app duoc luu rieng trong:

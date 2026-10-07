@@ -36,7 +36,7 @@ def main():
     check('Hidden desktop starter', 'sh.Run(cmd, 0, True)' in (ROOT/'MO_APP_NETWORKAUTOMATION.vbs').read_text(encoding='utf-8') and 'pythonw.exe' in (ROOT/'_internal/launcher/START_DESKTOP_CORE.bat').read_text(encoding='utf-8').lower() and not (ROOT/'START_DESKTOP_7.bat').exists())
     core=(ROOT/'_internal/launcher/START_DESKTOP_CORE.bat').read_text(encoding='utf-8')
     check('Locked venv cannot block startup', 'rmdir /s /q' not in core.lower() and '%LOCALAPPDATA%\\NetworkAutomation\\venvs' in core and '-repair-%RANDOM%-%RANDOM%' in core)
-    check('Obvious no-console launcher', (ROOT/'00_MO_APP_NETWORKAUTOMATION.vbs').is_file() and (ROOT/'START_HERE.txt').is_file())
+    check('Obvious no-console launcher', (ROOT/'app.vbs').is_file() and (ROOT/'MO_APP_NETWORKAUTOMATION.vbs').is_file() and (ROOT/'START_HERE.txt').is_file())
     check('PyInstaller windowed', 'console=False' in spec)
     check('Immediate WebView paint', 'html=_startup_splash_html()' in launcher and 'webview.start(_bootstrap, debug=False)' in launcher and '_fast_existing_user()' in launcher)
     check('Validated venv fast path', '.na_ready_70393' in core and 'current-7.0.3.txt' in core and 'goto RUNAPP_FAST' in core)

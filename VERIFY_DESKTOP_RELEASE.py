@@ -50,7 +50,7 @@ def verify(root:Path=ROOT):
     for p in dbroot.rglob('*') if dbroot.exists() else []:
         if p.is_file() and (p.suffix in {'.db','.lock','.db-wal','.db-shm'} or p.name in {'.credential.key','known_hosts'}):
             errors.append('RUNTIME_DATABASE_SHIPPED: '+p.relative_to(root).as_posix())
-    required=['desktop_launcher.py','webapi/desktop70.py','webapi/static/desktop70.js','NetworkAutomationDesktop.spec','installer/NetworkAutomation.iss','QA_DESKTOP_GATE.py','MO_APP_NETWORKAUTOMATION.vbs','00_MO_APP_NETWORKAUTOMATION.vbs','_internal/launcher/START_DESKTOP_CORE.bat','START_HERE.txt','requirements-lock.txt','requirements-dev.txt','webapi/windows_tools79.py','webapi/static/windows_tools79.js','webapi/static/i18n84.js']
+    required=['desktop_launcher.py','webapi/desktop70.py','webapi/static/desktop70.js','NetworkAutomationDesktop.spec','installer/NetworkAutomation.iss','QA_DESKTOP_GATE.py','app.vbs','MO_APP_NETWORKAUTOMATION.vbs','_internal/launcher/START_DESKTOP_CORE.bat','START_HERE.txt','requirements-lock.txt','requirements-dev.txt','webapi/windows_tools79.py','webapi/static/windows_tools79.js','webapi/static/i18n84.js']
     for name in required:
         if name not in data['files']: errors.append('REQUIRED_NOT_MANIFESTED: '+name)
     return {'ok':not errors,'version':'7.0.3','checked':checked,'errors':errors}

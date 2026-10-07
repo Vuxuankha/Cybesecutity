@@ -50,7 +50,7 @@ Dữ liệu vận hành nằm trong thư mục `runtime_data` cạnh ứng dụn
 
 ## Khởi động không hiện CMD/PowerShell
 
-Để bảo đảm không hiện cửa sổ CMD, hãy mở `00_MO_APP_NETWORKAUTOMATION.vbs` (khuyên dùng) hoặc `MO_APP_NETWORKAUTOMATION.vbs`. Các launcher `.bat` khởi động source đã được chuyển vào `_internal\launcher` để tránh người dùng nhấp nhầm. Môi trường Python được đặt trong `%LOCALAPPDATA%\NetworkAutomation\venvs`, không xóa `.venv` cũ cạnh source. Log bootstrap nằm tại `runtime_data\logs\desktop_bootstrap.log`.
+Để bảo đảm không hiện cửa sổ CMD, hãy mở `app.vbs` (khuyên dùng) hoặc `MO_APP_NETWORKAUTOMATION.vbs`. Các launcher `.bat` khởi động source đã được chuyển vào `_internal\launcher` để tránh người dùng nhấp nhầm. Môi trường Python được đặt trong `%LOCALAPPDATA%\NetworkAutomation\venvs`, không xóa `.venv` cũ cạnh source. Log bootstrap nằm tại `runtime_data\logs\desktop_bootstrap.log`.
 
 
 ## WebView2 prerequisite
@@ -58,7 +58,7 @@ Dữ liệu vận hành nằm trong thư mục `runtime_data` cạnh ứng dụn
 Ứng dụng kiểm tra Microsoft Edge WebView2 Runtime trước khi mở giao diện. Nếu thiếu, app dừng với thông báo rõ ràng thay vì lỗi cửa sổ chung.
 ## Khởi động bản source trên Windows
 
-- **Nên mở `00_MO_APP_NETWORKAUTOMATION.vbs`** để khởi động không hiện cửa sổ CMD.
+- **Nên mở `app.vbs`** để khởi động không hiện cửa sổ CMD.
 - Bản source hỗ trợ Python **3.11, 3.12 và 3.13**; khuyến nghị Python 3.12 x64.
 - Nếu máy chưa có Python tương thích, launcher sẽ hỏi có muốn tự động cài Python 3.12 bằng `winget` hay không.
 - Lần chạy đầu có thể mất vài phút vì ứng dụng tạo môi trường Python theo phiên bản trong `%LOCALAPPDATA%\NetworkAutomation\venvs` và cài dependency; tiến trình được ghi tại `runtime_data\logs\desktop_bootstrap.log`.

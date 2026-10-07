@@ -2,7 +2,7 @@
 import sqlite3
 import ipaddress
 from pathlib import Path
-from app_runtime import DATABASE_DIR, RESOURCE_DIR, migrate_portable_data_once
+from app_runtime import DATABASE_DIR, RESOURCE_DIR
 from upgrade_backup import backup_before_release
 from datetime import datetime
 
@@ -11,8 +11,7 @@ from datetime import datetime
 # DATABASE CONFIG
 # ============================================================
 
-# Writable database directory. Packaged builds use LOCALAPPDATA.
-migrate_portable_data_once()
+# Writable database directory. Migration is explicitly run by the desktop launcher, never as an import side effect.
 BASE_DIR = DATABASE_DIR
 DB_PATH = BASE_DIR / "network_automation.db"
 

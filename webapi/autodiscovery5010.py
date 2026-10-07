@@ -79,7 +79,7 @@ def _safe_network_from_adapter(adapter):
             if net.prefixlen < 24:
                 net=ipaddress.ip_network(f'{iface.ip}/24', strict=False)
             networks.append((int(adapter.get('metric') or 999999), bool(adapter.get('gateway')), iface.ip, net, False))
-        except Exception:
+        except (TypeError, ValueError):
             continue
     if not networks:
         # Safe fallback when Windows cannot provide a prefix: scan only the local /24.
@@ -89,7 +89,7 @@ def _safe_network_from_adapter(adapter):
                 if addr.version==4 and addr.is_private and not addr.is_link_local:
                     net=ipaddress.ip_network(f'{addr}/24', strict=False)
                     networks.append((int(adapter.get('metric') or 999999), bool(adapter.get('gateway')), addr, net, True))
-            except Exception:
+            except (TypeError, ValueError):
                 continue
     return networks
 

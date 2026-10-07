@@ -276,12 +276,15 @@ def asset_risk(request: Request, limit: int=1000):
     limit = max(1, min(int(limit), 3000))
     ips = set()
     with connection() as c:
+        tables={r['name'] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
         for table in ('ip_mac_inventory', 'security_assets'):
-            try:
-                for r in c.execute(f'SELECT ip FROM {table} WHERE ip IS NOT NULL AND ip<>\'\' LIMIT ?', (limit,)).fetchall():
-                    ips.add(str(r['ip']))
-            except Exception:
-                pass
+            if table not in tables:
+                continue
+            cols={r['name'] for r in c.execute(f'PRAGMA table_info({table})').fetchall()}
+            if 'ip' not in cols:
+                continue
+            for r in c.execute(f'SELECT ip FROM {table} WHERE ip IS NOT NULL AND ip<>\'\' LIMIT ?', (limit,)).fetchall():
+                ips.add(str(r['ip']))
         for r in c.execute("SELECT DISTINCT asset_ip FROM security_alerts51 WHERE asset_ip<>'' LIMIT ?", (limit,)).fetchall():
             ips.add(str(r['asset_ip']))
         for r in c.execute("SELECT DISTINCT asset_ip FROM vulnerability_findings51 WHERE asset_ip<>'' LIMIT ?", (limit,)).fetchall():

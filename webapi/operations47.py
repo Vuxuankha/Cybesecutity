@@ -401,7 +401,7 @@ def plan_preview(x:PlanIn, request:Request):
             if c.execute('SELECT COUNT(*) FROM web_plans47 WHERE actor_id=? AND consumed=0',(user['id'],)).fetchone()[0]>=20:
                 raise HTTPException(429,'TOO_MANY_PENDING_PLANS')
             c.execute('INSERT INTO web_plans47 VALUES(?,?,?,?,?,?,0)',
-                      (security37.digest(token),user['id'],security37.digest(request.cookies.get(security37.COOKIE,'')),
+                      (security37.digest(token),user['id'],security37.session_binding(request),
                        x.operation,json.dumps(plan),time.time()+300))
     return {**plan,'token':token,'expires_seconds':300 if token else 0}
 
@@ -414,7 +414,7 @@ def execute_plan(x:ExecuteIn, request:Request):
     with PLAN_LOCK:
         with connection() as c:
             r=c.execute('SELECT * FROM web_plans47 WHERE token_hash=?',(key,)).fetchone()
-        if not r or r['actor_id']!=user['id'] or r['session_hash']!=security37.digest(request.cookies.get(security37.COOKIE,'')):
+        if not r or r['actor_id']!=user['id'] or r['session_hash']!=security37.session_binding(request):
             raise HTTPException(403,'PLAN_NOT_OWNED_BY_THIS_SESSION')
         if r['consumed'] or r['expires']<=time.time():raise HTTPException(409,'PLAN_EXPIRED_OR_USED: preview again')
         old=json.loads(r['payload'])
@@ -507,7 +507,7 @@ def diagnostics_export(request:Request):
     report['privacy']='No IP, account, credential, terminal payload, file path or job output included.'
     from app_runtime import REPORT_DIR
     from webapi.reports37 import register
-    path=Path(REPORT_DIR)/('diagnostics_runtime_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json')
+    path=Path(REPORT_DIR)/('diagnostics_runtime_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f')+'_'+secrets.token_hex(4)+'.json')
     path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     return register(path,user['id'],'report')
 
@@ -515,7 +515,7 @@ def diagnostics_export(request:Request):
 @router.get('/session')
 def session_info(request:Request):
     user=security37.require_role(request)
-    key=security37.digest(request.cookies.get(security37.COOKIE,''))
+    key=security37.session_binding(request)
     with connection() as c:r=c.execute('SELECT issued FROM web_sessions37 WHERE token_hash=?',(key,)).fetchone()
     return {'role':user['role'],'absolute_remaining_seconds':max(0,int(security37.ABSOLUTE_TTL-(time.time()-r['issued']))) if r else 0,
             'terminal_allowed':user['role']=='Admin','mutation_allowed':user['role'] in ('Admin','Operator'),

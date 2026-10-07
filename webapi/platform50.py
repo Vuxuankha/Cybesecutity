@@ -5,6 +5,7 @@ Desktop-only local execution path.
 """
 from __future__ import annotations
 import json, os, platform, shutil, socket, subprocess, sys, time, ipaddress, threading
+import logging
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -106,8 +107,8 @@ def _fallback_ipv4():
         for info in socket.getaddrinfo(socket.gethostname(),None,socket.AF_INET,socket.SOCK_DGRAM):
             ip=info[4][0]
             if ip and not ip.startswith('127.'): ips.add(ip)
-    except Exception:
-        pass
+    except (socket.gaierror, OSError) as exc:
+        logging.getLogger(__name__).debug('Hostname IPv4 fallback failed: %s', exc)
     for target in ('1.1.1.1','8.8.8.8','192.168.1.1'):
         s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         try:

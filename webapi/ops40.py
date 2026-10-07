@@ -639,7 +639,8 @@ def restore_prepare(x:dict,request:Request):
         if not d:raise HTTPException(404,'Managed device not found')
         cr=c.execute("""SELECT cr.id,cr.name,cr.username,cr.port FROM device_credentials dc JOIN credentials cr ON cr.id=dc.credential_id WHERE dc.device_id=? AND UPPER(cr.kind)='SSH' AND UPPER(dc.purpose) IN ('BACKUP','SSH') ORDER BY CASE UPPER(dc.purpose) WHEN 'BACKUP' THEN 0 ELSE 1 END LIMIT 1""",(device_id,)).fetchone()
         if not cr:raise HTTPException(409,'Thiết bị chưa có SSH/Backup credential.')
-    raw=p.read_text(encoding='utf-8',errors='replace')
+    from modules.nms_v5 import read_config_backup
+    raw=read_config_backup(p)
     sha=hashlib.sha256(p.read_bytes()).hexdigest()
     token=secrets.token_urlsafe(32);phrase=f'RESTORE {device_id} {backup_id}'
     with _RESTORE_LOCK:
@@ -665,7 +666,7 @@ def validate_restore_authorization(token:str,confirmation:str,user_id:int,device
 def execute_restore_job(device_id:int,backup_id:int,token:str,confirmation:str,actor:dict) -> dict:
     """Controlled Cisco-IOS style restore. No generic arbitrary-command restore."""
     auth=validate_restore_authorization(token,confirmation,actor['id'],device_id,backup_id)
-    from modules.nms_v5 import ssh_backup,decrypt_secret
+    from modules.nms_v5 import ssh_backup,decrypt_secret,read_config_backup
     from modules.nms_v6 import audit
     from modules.ssh_security import build_strict_ssh_client
     with connection() as c:
@@ -678,7 +679,7 @@ def execute_restore_job(device_id:int,backup_id:int,token:str,confirmation:str,a
     vendor=(dict(d).get('vendor') or '').lower()
     if 'cisco' not in vendor:
         raise ValueError('Restore is intentionally limited to Cisco-like managed devices; other vendors require a verified vendor-specific restore driver')
-    path=auth['path']; text=path.read_text(encoding='utf-8',errors='replace')
+    path=auth['path']; text=read_config_backup(path)
     lines=text.splitlines()
     if len(lines)>20000:raise ValueError('Backup has too many lines for guarded restore')
     safety=ssh_backup(full,cr,'show running-config')

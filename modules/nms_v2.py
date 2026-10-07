@@ -172,7 +172,8 @@ class BackupSchedulerPage:
                 if not pwd:raise RuntimeError('SSH password is not loaded for this session. Select the job and click Set Password.')
                 cli.connect(r['host'],port=r['port'],username=r['username'],password=pwd,timeout=8,look_for_keys=False,allow_agent=False);stdin,stdout,stderr=cli.exec_command(r['command'],timeout=20);data=stdout.read().decode(errors='replace');err=stderr.read().decode(errors='replace');cli.close()
                 if err and not data:raise RuntimeError(err)
-                dst=BACKUP_DIR/f"{r['host'].replace(':','_')}_scheduled_{datetime.now().strftime('%Y%m%d_%H%M%S')}.cfg";dst.write_text(data,encoding='utf-8')
+                from modules.nms_v5 import write_config_backup
+                dst=BACKUP_DIR/f"{r['host'].replace(':','_')}_scheduled_{datetime.now().strftime('%Y%m%d_%H%M%S')}.cfg.enc";write_config_backup(dst,data)
                 c=_connect();c.execute('UPDATE ssh_backup_jobs SET last_run=?,next_run=? WHERE id=?',(_now(),time.time()+r['interval_min']*60,i));c.execute('INSERT INTO config_backups(device_name,source,file_path,size_bytes,note,created_at) VALUES(?,?,?,?,?,?)',(r['host'],'Scheduled SSH',str(dst),dst.stat().st_size,r['name'],_now()));c.commit();c.close();self.parent.after(0,self.refresh);self.activity_callback(f"Scheduled backup saved: {dst}")
             except Exception as e:
                 c=_connect();c.execute('UPDATE ssh_backup_jobs SET last_run=?,next_run=? WHERE id=?',(_now(),time.time()+r['interval_min']*60,i));c.commit();c.close();self.activity_callback(f"Backup job {r['name']} failed: {e}")

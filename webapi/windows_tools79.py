@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import ipaddress
+import logging
 import os
 import re
 import shutil
@@ -76,7 +77,7 @@ def _kill_tree(pid: int) -> None:
         return
     try:
         taskkill = shutil.which('taskkill.exe') or 'taskkill.exe'
-        subprocess.run(
+        result = subprocess.run(
             [taskkill, '/PID', str(int(pid)), '/T', '/F'],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -84,8 +85,10 @@ def _kill_tree(pid: int) -> None:
             check=False,
             **_hidden_kwargs(),
         )
-    except Exception:
-        pass
+        if result.returncode not in (0, 128):
+            logging.getLogger(__name__).warning('taskkill returned %s for pid=%s', result.returncode, pid)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        logging.getLogger(__name__).warning('Unable to terminate process tree pid=%s: %s', pid, exc)
 
 
 def _run_process(argv: list[str], timeout: int = _DEFAULT_TIMEOUT) -> dict:
@@ -112,11 +115,12 @@ def _run_process(argv: list[str], timeout: int = _DEFAULT_TIMEOUT) -> dict:
             _kill_tree(proc.pid)
             try:
                 proc.kill()
-            except Exception:
-                pass
+            except (OSError, ProcessLookupError) as kill_exc:
+                logging.getLogger(__name__).warning('Direct kill failed pid=%s: %s', proc.pid, kill_exc)
             try:
                 out, err = proc.communicate(timeout=3)
-            except Exception:
+            except (OSError, subprocess.SubprocessError) as comm_exc:
+                logging.getLogger(__name__).warning('Timed-out process output collection failed pid=%s: %s', proc.pid, comm_exc)
                 out, err = '', ''
             raise HTTPException(504, 'WINDOWS_TOOL_TIMEOUT') from exc
     except HTTPException:

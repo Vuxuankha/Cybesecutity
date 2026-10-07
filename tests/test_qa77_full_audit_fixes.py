@@ -83,11 +83,12 @@ def test_portable_data_resolution_survives_bad_or_unwritable_optional_config():
     assert "NA_DATA_LOCATION_WARNING" in runtime
     assert "candidates.append(install_root() / 'runtime_data')" in runtime
     assert "Path(base) / APP_NAME" in runtime
-    # Migration marker is informational and no longer an early-return gate.
     fn=runtime.split('def migrate_portable_data_once()',1)[1].split('def hidden_subprocess_kwargs',1)[0]
-    assert 'if marker.exists()' not in fn
     assert 'kali_integration.json' not in fn
-    assert 'raise failures[0]' in fn
+    assert 'src.backup(dst)' in fn
+    assert 'source_root' in fn
+    assert "('.credential.key','known_hosts')" in fn
+    assert 'DATABASE_DIR.rmdir()' in fn and 'os.replace(stage_db, DATABASE_DIR)' in fn
 
 
 def test_sqlite_manual_connections_are_closed_in_audited_paths():

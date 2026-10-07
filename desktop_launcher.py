@@ -226,8 +226,12 @@ def _show_error(title: str, message: str) -> None:
         root = tk.Tk(); root.withdraw()
         messagebox.showerror(title, message, parent=root)
         root.destroy()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error('Unable to display desktop error dialog: %s', exc)
+        try:
+            sys.stderr.write(f"{title}: {message}\n")
+        except (OSError, UnicodeError):
+            logger.error('%s: %s', title, message)
 
 
 def _fast_existing_user() -> bool:
@@ -275,6 +279,16 @@ def _first_run_admin() -> bool:
         active_admin = c.execute("SELECT 1 FROM app_users WHERE role='Admin' AND enabled=1 LIMIT 1").fetchone()
     if active_admin:
         return True
+    if count > 0:
+        # Never reset or reactivate an existing administrator without proving identity.
+        # Recovery must come from a known-good backup/DR export, not a local unauthenticated dialog.
+        _show_error(
+            "Khôi phục quản trị",
+            "Cơ sở dữ liệu còn tài khoản nhưng không còn Admin đang hoạt động. "
+            "Ứng dụng sẽ không tự đặt lại mật khẩu hoặc kích hoạt Admin. "
+            "Hãy khôi phục bản sao lưu/DR hợp lệ hoặc liên hệ quản trị viên sở hữu dữ liệu."
+        )
+        return False
 
     import tkinter as tk
     from tkinter import ttk, messagebox
@@ -290,8 +304,8 @@ def _first_run_admin() -> bool:
 
     frame = ttk.Frame(root, padding=22)
     frame.grid(row=0, column=0, sticky="nsew")
-    heading = "Tạo tài khoản quản trị đầu tiên" if count == 0 else "Khôi phục quyền quản trị cục bộ"
-    detail = "Tài khoản được lưu trong thư mục runtime_data cạnh ứng dụng; hãy chép cả thư mục này khi đổi máy." if count == 0 else "Không còn Admin đang hoạt động. Có thể kích hoạt lại Admin cũ hoặc tạo Admin mới; dữ liệu khác được giữ nguyên."
+    heading = "Tạo tài khoản quản trị đầu tiên"
+    detail = "Tài khoản quản trị đầu tiên được tạo cục bộ. Hãy giữ bản sao lưu dữ liệu/DR để phục hồi quyền truy cập khi cần."
     ttk.Label(frame, text=heading, font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
     ttk.Label(frame, text=detail, wraplength=470).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
 

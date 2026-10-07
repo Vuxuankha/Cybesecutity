@@ -1,5 +1,5 @@
 from modules.ui_ux_config import PALETTE as UI_COLORS
-import json, platform, socket, subprocess, threading, time, urllib.request, queue, logging
+import json, platform, socket, subprocess, threading, time, urllib.request, queue, logging, os
 from datetime import datetime
 try:
     import tkinter as tk
@@ -19,6 +19,36 @@ APP_PRESETS = {
     'SQL Server': 1433, 'IIS / HTTP': 80, 'HTTPS': 443, 'MySQL': 3306,
     'PostgreSQL': 5432, 'DNS': 53, 'DHCP': 67, 'Apache/Nginx': 80,
 }
+
+_RFC1918=(ipaddress.ip_network('10.0.0.0/8'),ipaddress.ip_network('172.16.0.0/12'),ipaddress.ip_network('192.168.0.0/16'))
+_IPV6_ULA=ipaddress.ip_network('fc00::/7')
+
+def _monitor_ip_allowed(value):
+    addr=ipaddress.ip_address(value)
+    if addr.is_loopback:
+        return True
+    if addr.is_unspecified or addr.is_multicast or addr.is_link_local or addr.is_reserved:
+        return False
+    if isinstance(addr,ipaddress.IPv4Address) and any(addr in n for n in _RFC1918):
+        return True
+    if isinstance(addr,ipaddress.IPv6Address) and addr in _IPV6_ULA:
+        return True
+    return os.environ.get('NA_ALLOW_PUBLIC_MONITOR_TARGETS','0')=='1' and addr.is_global
+
+def _validate_resolved_target(host):
+    try:
+        values={item[4][0].split('%',1)[0] for item in socket.getaddrinfo(host,None,type=socket.SOCK_STREAM)}
+    except socket.gaierror as exc:
+        raise ValueError('Không phân giải được Host/IP monitor.') from exc
+    if not values or any(not _monitor_ip_allowed(v) for v in values):
+        raise ValueError('Target monitor chỉ được phép ở loopback/private/ULA. Đặt NA_ALLOW_PUBLIC_MONITOR_TARGETS=1 nếu chủ động cho phép IP public.')
+    return values
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+_HTTP_OPENER=urllib.request.build_opener(_NoRedirect)
 
 
 def validate_target(host, port, protocol):
@@ -44,6 +74,7 @@ def validate_target(host, port, protocol):
         raise ValueError('Port phải từ 1 đến 65535.')
     if protocol not in ('TCP', 'HTTP', 'HTTPS'):
         raise ValueError('Protocol phải là TCP, HTTP hoặc HTTPS.')
+    _validate_resolved_target(host)
     return host, port, protocol
 
 def ensure_server_monitor_tables():
@@ -94,7 +125,7 @@ def check_target(row):
             url_host = '['+host.strip('[]')+']' if ':' in host else host
             default_port = 80 if proto == 'HTTP' else 443
             url=f'{scheme}://{url_host}' + (f':{port}' if port and port != default_port else '') + '/'
-            with urllib.request.urlopen(url,timeout=5) as r:
+            with _HTTP_OPENER.open(url,timeout=5) as r:
                 code=getattr(r,'status',200); status='UP' if code < 400 else 'WARN'; detail=f'HTTP {code}'
         else:
             with socket.create_connection((host,port),timeout=5): pass

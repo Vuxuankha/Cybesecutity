@@ -1,5 +1,6 @@
 from modules.ui_ux_config import PALETTE as UI_COLORS
 import queue
+import logging
 import re
 import os
 import socket
@@ -269,8 +270,8 @@ class BaseAdvancedPage:
     def activity(self, text):
         try:
             self.activity_callback(text)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning('Activity callback failed: %s', exc)
 
     def card(self):
         f = tk.Frame(self.parent, bg=UI_COLORS['surface'], bd=1, relief='solid')
@@ -601,8 +602,9 @@ class SSHAutomationPage(BaseAdvancedPage):
                 out = self._execute(commands, options)
                 if backup:
                     name = re.sub(r'[^A-Za-z0-9_.-]', '_', options['host'])
-                    dst = BACKUP_DIR / f"{name}_ssh_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.cfg"
-                    dst.write_text(out, encoding='utf-8')
+                    from modules.nms_v5 import write_config_backup
+                    dst = BACKUP_DIR / f"{name}_ssh_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.cfg.enc"
+                    write_config_backup(dst,out)
                     conn = _connect()
                     try:
                         conn.execute('INSERT INTO config_backups(device_name,source,file_path,size_bytes,note,created_at) VALUES(?,?,?,?,?,?)', (name,'SSH',str(dst),dst.stat().st_size,'Automatic SSH backup',_now()))

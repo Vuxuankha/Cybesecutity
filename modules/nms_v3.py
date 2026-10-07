@@ -32,8 +32,10 @@ def ensure_v3_tables():
 
 
 def _num(v):
-    try:return float(v)
-    except:return None
+    try:
+        return float(v)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 class ResourceMonitorPage:
     SYS_DESCR='1.3.6.1.2.1.1.1.0'

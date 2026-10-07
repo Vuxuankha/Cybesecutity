@@ -252,8 +252,10 @@ def _tcp_latency_series(host: str = DEFAULT_SPEED_HOST, port: int = 443, samples
         except Exception as exc:
             warm_error = type(exc).__name__
         finally:
-            try: sock.close()
-            except Exception: pass
+            try:
+                sock.close()
+            except OSError:
+                pass
     if chosen is None:
         return {'target': host, 'samples': samples, 'replies': 0, 'packet_loss': 100.0,
                 'latency_ms': None, 'jitter_ms': None, 'errors': [warm_error or 'CONNECT_FAILED'], 'method': 'TCP'}
@@ -271,8 +273,10 @@ def _tcp_latency_series(host: str = DEFAULT_SPEED_HOST, port: int = 443, samples
         except Exception as exc:
             errors.append(type(exc).__name__)
         finally:
-            try: sock.close()
-            except Exception: pass
+            try:
+                sock.close()
+            except OSError:
+                pass
         time.sleep(0.04)
     replies = len(values)
     loss = round((samples - replies) * 100.0 / samples, 1)

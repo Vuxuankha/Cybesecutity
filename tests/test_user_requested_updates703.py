@@ -74,12 +74,12 @@ def test_clock_updates_every_second_without_page_refresh():
     assert "new Intl.DateTimeFormat(loc" in app
 
 
-def test_password_login_policy_is_nonempty_only():
+def test_password_login_policy_has_minimum_strength():
     from modules.accounts import validate_password
-    validate_password('1')
-    validate_password('a')
-    with pytest.raises(ValueError):
-        validate_password('')
+    validate_password('StrongPassword1!')
+    with pytest.raises(ValueError): validate_password('1')
+    with pytest.raises(ValueError): validate_password(' ')
+    with pytest.raises(ValueError): validate_password('')
 
 
 def test_mfa_removed_from_routes_login_and_vault_step_up():

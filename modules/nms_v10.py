@@ -2,6 +2,7 @@ from __future__ import annotations
 from modules.ui_ux_config import PALETTE as UI_COLORS
 
 from datetime import datetime
+import logging
 try:
     import tkinter as tk
 except (ImportError, ModuleNotFoundError):
@@ -251,8 +252,9 @@ class RootCauseEngine:
         if self.job:
             try:
                 self.root.after_cancel(self.job)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.getLogger(__name__).warning('Cannot cancel correlation timer: %s', exc)
+                self.activity(f'Lỗi dừng lịch tương quan: {exc}')
             self.job = None
 
 

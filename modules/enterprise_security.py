@@ -243,47 +243,68 @@ def tcp_probe(ip: str, ports=DEFAULT_PORTS, timeout: float = 0.8) -> dict:
         except (OSError, TimeoutError):
             pass
     detail = {"open_ports": opened, "tested_ports": list(ports)}
+    risky = [p for p in opened if p in (23, 21, 445, 3389)]
+    result = "REVIEW" if risky else "PASS"
+    severity = "MEDIUM" if risky else "INFO"
     c = _connect()
     try:
         c.execute("INSERT INTO security_checks(asset_ip,check_type,result,severity,detail_json,created_at) VALUES(?,?,?,?,?,?)",
-                  (ip, "TCP_CONNECT", "PASS", "INFO", json.dumps(detail), _now()))
+                  (ip, "TCP_CONNECT", result, severity, json.dumps(detail), _now()))
         c.commit()
     finally:
         c.close()
-    risky = [p for p in opened if p in (23, 21, 445, 3389)]
     if risky:
         record_event(ip, "NetworkProbe", "EXPOSED_SERVICE", "MEDIUM", "Dịch vụ cần rà soát đang mở", "Ports: " + ", ".join(map(str, risky)))
+    detail.update({"result": result, "severity": severity})
     return detail
 
 
 def tls_certificate_check(ip: str, port: int = 443, timeout: float = 3.0) -> dict:
-    """Inspect a TLS certificate without sending application credentials."""
+    """Validate TLS protocol and certificate trust/hostname for a registered asset."""
     ip = normalize_ip(ip)
     c = _connect()
     try:
-        if not c.execute("SELECT 1 FROM security_assets WHERE ip=?", (ip,)).fetchone():
+        asset=c.execute("SELECT expected_hostname FROM security_assets WHERE ip=?", (ip,)).fetchone()
+        if not asset:
             raise ValueError("Chỉ được kiểm tra IP đã đăng ký trong Security Assets")
+        expected_hostname=(asset['expected_hostname'] or '').strip() or ip
     finally:
         c.close()
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((ip, int(port)), timeout=timeout) as sock:
-        with context.wrap_socket(sock, server_hostname=ip) as tls:
-            cert = tls.getpeercert(binary_form=True)
-            cipher = tls.cipher()
-            version = tls.version()
-    result = {"tls_version": version, "cipher": cipher[0] if cipher else "", "certificate_sha256": hashlib.sha256(cert).hexdigest()}
-    severity = "INFO" if version in ("TLSv1.3", "TLSv1.2") else "HIGH"
+
+    def handshake(context):
+        with socket.create_connection((ip, int(port)), timeout=timeout) as sock:
+            with context.wrap_socket(sock, server_hostname=expected_hostname) as tls:
+                return tls.getpeercert(binary_form=True), tls.cipher(), tls.version()
+
+    verified=True; verify_error=''
+    try:
+        cert,cipher,version=handshake(ssl.create_default_context())
+    except ssl.SSLCertVerificationError as exc:
+        verified=False; verify_error=str(exc)[:500]
+        # A second unverified handshake is diagnostic only, so we can still report
+        # protocol/fingerprint while keeping the check result FAILED/REVIEW.
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname=False; context.verify_mode=ssl.CERT_NONE
+        cert,cipher,version=handshake(context)
+    result = {"tls_version": version, "cipher": cipher[0] if cipher else "",
+              "certificate_sha256": hashlib.sha256(cert).hexdigest(),
+              "certificate_verified": verified, "expected_hostname": expected_hostname}
+    if verify_error:
+        result['verify_error']=verify_error
+    weak_protocol=version not in ("TLSv1.3", "TLSv1.2")
+    severity = "HIGH" if (weak_protocol or not verified) else "INFO"
+    check_result = "PASS" if severity == "INFO" else "REVIEW"
     c = _connect()
     try:
         c.execute("INSERT INTO security_checks(asset_ip,check_type,result,severity,detail_json,created_at) VALUES(?,?,?,?,?,?)",
-                  (ip, "TLS", "PASS" if severity == "INFO" else "REVIEW", severity, json.dumps(result), _now()))
+                  (ip, "TLS", check_result, severity, json.dumps(result), _now()))
         c.commit()
     finally:
         c.close()
-    if severity == "HIGH":
+    if weak_protocol:
         record_event(ip, "TLSCheck", "WEAK_TLS", "HIGH", "Phiên bản TLS cần nâng cấp", version or "Unknown")
+    if not verified:
+        record_event(ip, "TLSCheck", "TLS_CERT_INVALID", "HIGH", "Chứng thư TLS không xác thực được", verify_error or expected_hostname)
     return result
 
 

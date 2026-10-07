@@ -181,12 +181,19 @@ def _registered_devices() -> list[dict[str, Any]]:
         name_expr = "COALESCE(NULLIF(hostname,'')," + ipcol + ")" if 'hostname' in cols else ipcol
         rows = c.execute(f'SELECT id,{ipcol} AS ip,{name_expr} AS name FROM devices WHERE {ipcol} IS NOT NULL AND trim({ipcol})<>\'\' ORDER BY id').fetchall()
         managed={}
-        try:
-            for m in c.execute("SELECT id,COALESCE(NULLIF(ip,''),ip_address) ip FROM network_devices").fetchall():
+        ncols={r['name'] for r in c.execute('PRAGMA table_info(network_devices)').fetchall()}
+        if 'ip' in ncols and 'ip_address' in ncols:
+            ip_expr="COALESCE(NULLIF(ip,''),ip_address)"
+        elif 'ip' in ncols:
+            ip_expr='ip'
+        elif 'ip_address' in ncols:
+            ip_expr='ip_address'
+        else:
+            ip_expr=''
+        if ip_expr:
+            for m in c.execute(f'SELECT id,{ip_expr} ip FROM network_devices').fetchall():
                 if m['ip'] and str(m['ip']).strip() not in managed:
                     managed[str(m['ip']).strip()]=m['id']
-        except Exception:
-            pass
     out = []
     for r in rows:
         try:

@@ -1,5 +1,6 @@
 from modules.ui_theme import PALETTE as UI_COLORS
 import csv
+import logging
 import os
 import platform
 import shutil
@@ -159,8 +160,8 @@ class BasePage:
     def activity(self, text):
         try:
             self.activity_callback(text)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning('Activity callback failed: %s', exc)
 
     def card(self):
         f = tk.Frame(self.parent, bg=UI_COLORS['surface'], bd=1, relief="solid")
@@ -429,7 +430,8 @@ class BackupConfigPage(BasePage):
         def save():
             content=txt.get("1.0","end-1c"); name=self.device.get().strip() or "device"
             if not content.strip(): messagebox.showwarning("Sao lưu cấu hình","Paste configuration text first.",parent=win); return
-            dst=BACKUP_DIR/f"{name.replace(' ','_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.cfg"; dst.write_text(content,encoding="utf-8")
+            from modules.nms_v5 import write_config_backup
+            dst=BACKUP_DIR/f"{name.replace(' ','_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.cfg.enc"; write_config_backup(dst,content)
             self._save_record(name,"Pasted text",dst); self.activity(f"Configuration text backup created: {dst.name}"); win.destroy(); self.refresh()
         tk.Button(win,text="Save Backup",command=save,bg=UI_COLORS['primary'],fg=UI_COLORS['text']).pack(pady=(0,10))
 
@@ -458,8 +460,11 @@ class BackupConfigPage(BasePage):
         if not r:return
         src=Path(r["file_path"])
         if not src.exists():messagebox.showerror("Sao lưu cấu hình","Backup file no longer exists.");return
-        dst=filedialog.asksaveasfilename(initialfile=src.name)
-        if dst:shutil.copy2(src,dst);self.activity(f"Backup exported: {dst}")
+        dst=filedialog.asksaveasfilename(initialfile=src.name.removesuffix('.enc'))
+        if dst:
+            from modules.nms_v5 import read_config_backup
+            Path(dst).write_text(read_config_backup(src),encoding='utf-8')
+            self.activity(f"Backup exported: {dst}")
 
     def delete_selected(self):
         r=self._row();

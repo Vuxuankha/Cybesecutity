@@ -25,7 +25,7 @@
 - Removed unused duplicate auth/router implementation; one auth/session stack remains active.
 - Added release dependency lock and explicit QA dependencies.
 - Windows build/source bootstrap supports Python 3.13/3.12/3.11 and common direct installation paths.
-- User-facing source startup is now `00_MO_APP_NETWORKAUTOMATION.vbs` / `MO_APP_NETWORKAUTOMATION.vbs`; source `.bat` bootstrap is internal-only and hidden.
+- User-facing source startup is now `app.vbs` / `MO_APP_NETWORKAUTOMATION.vbs`; source `.bat` bootstrap is internal-only and hidden.
 
 ## Regression status
 
@@ -40,7 +40,7 @@
 - Error code 11 is now explained in a friendly dialog; user can explicitly opt in to install Python 3.12 with `winget` and retry automatically.
 - Error codes 12/13/14 now show actionable messages for venv/pip/dependency failures.
 - Source bootstrap no longer touches the legacy `.venv` beside the source. It uses a versioned environment under `%LOCALAPPDATA%\NetworkAutomation\venvs`; an invalid/locked versioned environment is preserved and a separate repair environment is created.
-- `00_MO_APP_NETWORKAUTOMATION.vbs` is the recommended no-console source launcher. The bootstrap no longer deletes an old `.venv`; it uses a versioned venv under LOCALAPPDATA and falls back to a repair environment if needed.
+- `app.vbs` is the recommended no-console source launcher. The bootstrap no longer deletes an old `.venv`; it uses a versioned venv under LOCALAPPDATA and falls back to a repair environment if needed.
 
 
 ## Fast-start hotfix (QA93)

@@ -297,9 +297,12 @@ def _pretty_value(v):
         # Numeric SNMP types
         if hasattr(v, '__int__') and v.__class__.__name__ not in ('OctetString','ObjectIdentifier'):
             return int(v)
-    except Exception: pass
-    try: return v.prettyPrint()
-    except Exception: return str(v)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        return v.prettyPrint()
+    except (AttributeError, TypeError, ValueError):
+        return str(v)
 
 
 def secure_snmp_get(host, oids, version='v2c', community='public', credential_id=None, port=161, timeout=2.0):

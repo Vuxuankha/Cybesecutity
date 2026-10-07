@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 from fastapi import APIRouter,Request,HTTPException
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel,Field
 from webapi.model37 import StrictBaseModel
 from modules import accounts
@@ -137,10 +138,17 @@ def download(token:str,request:Request):
         with connection() as c:c.execute('DELETE FROM web_downloads37 WHERE token=?',(token,))
         raise HTTPException(410,'Download expired')
     if (r['kind']=='database' and u['role']!='Admin') or (r['owner_id']!=u['id'] and u['role']!='Admin'): raise HTTPException(403,'Download not authorized')
-    p=Path(r['path']).resolve();root=Path(BACKUP_DIR if r['kind']=='database' else REPORT_DIR).resolve()
-    if not p.is_relative_to(root) or not p.is_file(): raise HTTPException(404,'File unavailable')
-    with connection() as c:c.execute('DELETE FROM web_downloads37 WHERE token=?',(token,))
-    return FileResponse(p,filename=r['name'],media_type='application/octet-stream')
+    p=Path(r['path']).resolve()
+    if str(r['kind']).startswith('external_'):
+        # External paths are exact files created by the desktop folder-picker flow;
+        # authorization is still owner-bound and token-bound.
+        if not p.is_file(): raise HTTPException(404,'File unavailable')
+    else:
+        root=Path(BACKUP_DIR if r['kind']=='database' else REPORT_DIR).resolve()
+        if not p.is_relative_to(root) or not p.is_file(): raise HTTPException(404,'File unavailable')
+    def consume_after_send():
+        with connection() as c:c.execute('DELETE FROM web_downloads37 WHERE token=?',(token,))
+    return FileResponse(p,filename=r['name'],media_type='application/octet-stream',background=BackgroundTask(consume_after_send))
 
 # Explicit public UI assets only. The 4.6 UI includes nested vendor assets;
 # keeping the older four-file route made live46.js/terminal46.js return 404.

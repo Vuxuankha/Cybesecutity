@@ -7,8 +7,8 @@ from modules.nms_v6 import ensure_v6_tables
 
 ROLES = ('Admin', 'Analyst', 'Operator', 'Viewer')
 PUBLIC_FIELDS = ('id', 'username', 'role', 'enabled', 'created_at', 'updated_at')
-PASSWORD_MIN_LENGTH = 1
-PASSWORD_MAX_LENGTH = 512
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 128
 
 
 def public_user(row):
@@ -18,18 +18,21 @@ def public_user(row):
 
 
 def validate_password(password: str) -> None:
-    """Desktop password policy: any non-empty value is accepted.
-
-    The maximum is still bounded to protect the local API/database from
-    accidental oversized input; no minimum length or complexity rule is
-    imposed by the application.
-    """
+    """Validate local-account passwords without silently accepting weak whitespace values."""
     if not isinstance(password, str):
         raise ValueError('Mật khẩu không hợp lệ.')
+    if password.strip() == '':
+        raise ValueError('Mật khẩu không được chỉ chứa khoảng trắng.')
     if len(password) < PASSWORD_MIN_LENGTH:
-        raise ValueError('Mật khẩu không được để trống.')
+        raise ValueError(f'Mật khẩu phải có ít nhất {PASSWORD_MIN_LENGTH} ký tự.')
     if len(password) > PASSWORD_MAX_LENGTH:
         raise ValueError(f'Mật khẩu tối đa {PASSWORD_MAX_LENGTH} ký tự.')
+    # A local desktop account still needs resistance to trivial guessing.  Do not
+    # require a particular symbol class, but require at least two character classes.
+    classes = sum((any(ch.islower() for ch in password), any(ch.isupper() for ch in password),
+                   any(ch.isdigit() for ch in password), any(not ch.isalnum() and not ch.isspace() for ch in password)))
+    if classes < 2:
+        raise ValueError('Mật khẩu phải kết hợp ít nhất hai nhóm: chữ thường, chữ hoa, số hoặc ký tự đặc biệt.')
 
 
 @contextmanager
@@ -90,8 +93,8 @@ def _ensure_username_available(c, username, exclude_id=None):
 
 
 def _event(c, actor, action, target, detail=''):
-    c.execute('INSERT INTO audit_log(username,role,action,target,detail,created_at) VALUES(?,?,?,?,?,?)',
-              (actor['username'], actor['role'], action, target, detail, _now()))
+    c.execute('INSERT INTO audit_log(actor_user_id,username,role,action,target,detail,created_at) VALUES(?,?,?,?,?,?,?)',
+              (actor.get('id'), actor['username'], actor['role'], action, target, detail, _now()))
 
 
 def get_profile(session):
@@ -188,6 +191,7 @@ def activity_rows(session, query=''):
         sql = 'SELECT * FROM audit_log WHERE (username LIKE ? OR action LIKE ? OR target LIKE ? OR detail LIKE ?)'
         params = [q, q, q, q]
         if actor['role'] != 'Admin':
-            sql += ' AND username=?'
-            params.append(actor['username'])
+            # Immutable account id keeps history attached after username changes.
+            sql += ' AND actor_user_id=?'
+            params.append(actor['id'])
         return [dict(r) for r in c.execute(sql + ' ORDER BY id DESC LIMIT 1000', params)]

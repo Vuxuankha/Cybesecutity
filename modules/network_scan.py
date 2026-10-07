@@ -1,4 +1,5 @@
 import socket
+import logging
 import subprocess
 import platform
 import ipaddress
@@ -101,7 +102,8 @@ def _arp_snapshot(force=False):
                     command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                     errors="ignore", timeout=2, **hidden_subprocess_kwargs()
                 )
-            except Exception:
+            except (OSError, subprocess.SubprocessError) as exc:
+                logging.getLogger(__name__).warning('ARP snapshot command failed (%s): %s', command[0], exc)
                 continue
             for line in (result.stdout or '').splitlines():
                 ips = re.findall(r"(?<!\d)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?!\d)", line)

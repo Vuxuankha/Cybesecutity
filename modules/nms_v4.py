@@ -1,5 +1,6 @@
 from modules.ui_theme import PALETTE as UI_COLORS
 import socket, threading, time
+import logging
 from datetime import datetime
 try:
     import tkinter as tk
@@ -86,8 +87,9 @@ def evaluate_alert_rules():
                     from modules.nms_v8 import active_maintenance_for_host
                     if active_maintenance_for_host(host):
                         continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logging.getLogger(__name__).error('Maintenance-state lookup failed for %s; suppressing rule evaluation: %s', host, exc)
+                    continue
                 op=r['operator'];th=float(r['threshold']);bad={'>':val>th,'>=':val>=th,'<':val<th,'<=':val<=th}.get(op,False)
                 st=c.execute('SELECT * FROM alert_rule_state WHERE rule_id=? AND host=?',(r['id'],host)).fetchone();was=bool(st['active']) if st else False
                 msg=f"{r['name']}: {r['metric']} = {val:.2f} {op} {th:g}"

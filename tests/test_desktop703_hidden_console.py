@@ -17,7 +17,7 @@ def test_background_network_processes_are_hidden_on_windows():
 
 def test_desktop_launcher_uses_hidden_vbs_and_pythonw():
     vbs=text("MO_APP_NETWORKAUTOMATION.vbs")
-    alias=text("00_MO_APP_NETWORKAUTOMATION.vbs")
+    alias=text("app.vbs")
     core=text("_internal/launcher/START_DESKTOP_CORE.bat")
     assert "sh.Run(cmd, 0, True)" in vbs
     assert "wscript.exe" in alias.lower()

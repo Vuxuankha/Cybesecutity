@@ -1,4 +1,5 @@
 import difflib
+import logging
 import sqlite3
 from datetime import datetime
 
@@ -106,7 +107,8 @@ def audit_device(device_id, command='show running-config', create_alerts=True):
                 try:
                     from modules.advanced_pages import notify_alert
                     notify_alert(d['ip'],'Configuration Drift',msg,'Warning',event_key=f'drift|{d["ip"]}|{adds}|{removes}')
-                except Exception: pass
+                except Exception as exc:
+                    logging.getLogger(__name__).error('Configuration-drift notification failed for %s: %s', d['ip'], exc)
         if counts['HIGH']:
             failed=', '.join(r['control'] for r in rows if r['status']=='HIGH')
             msg=f'{name}: {counts["HIGH"]} HIGH - {failed}'
@@ -114,5 +116,6 @@ def audit_device(device_id, command='show running-config', create_alerts=True):
                 try:
                     from modules.advanced_pages import notify_alert
                     notify_alert(d['ip'],'Security Posture',msg,'Critical',event_key=f'security|{d["ip"]}|{failed}')
-                except Exception: pass
+                except Exception as exc:
+                    logging.getLogger(__name__).error('Security-posture notification failed for %s: %s', d['ip'], exc)
     return {'device':d,'config':cfg,'baseline':b,'diff':diff,'counts':counts,'rows':rows,'status':status,'detail':detail}

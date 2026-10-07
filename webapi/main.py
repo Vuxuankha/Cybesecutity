@@ -323,9 +323,15 @@ def write_ping(r):
     return data37.write_ping(r)
 
 @app.get('/api/health')
-def health():
+def health(request: Request = None):
     ready=bool(_STARTUP_STATE.get('background_ready'))
-    payload={'ok':ready,'version':VERSION,'core_version':VERSION,'ui_version':UI_VERSION,'release':RELEASE,'asset_version':ASSET_VERSION,'service':SERVICE,'instance':os.environ.get('NA_INSTANCE_TOKEN','manual'),'boot_id':__import__('webapi.operations47',fromlist=['BOOT_ID']).BOOT_ID,'startup_mode':_STARTUP_STATE.get('mode'),'background_ready':ready,'background_error':_STARTUP_STATE.get('background_error') or ''}
+    payload={'ok':ready,'version':VERSION,'background_ready':ready}
+    # The desktop launcher needs bundle/instance fields to distinguish its own local
+    # process from a stale listener. Do not expose those internals to remote callers.
+    if request is None or security37._is_loopback_request(request):
+        payload.update({'core_version':VERSION,'ui_version':UI_VERSION,'release':RELEASE,'asset_version':ASSET_VERSION,
+                        'service':SERVICE,'instance':os.environ.get('NA_INSTANCE_TOKEN','manual'),
+                        'startup_mode':_STARTUP_STATE.get('mode')})
     if not ready:
         return JSONResponse(payload,status_code=503,headers={'Retry-After':'1'})
     return payload
@@ -623,6 +629,8 @@ def health_samples(limit:int=300):
         d['data_state']=data37.freshness(d.get('created_at'));d['status']='Unknown'
         if d['data_state']=='FRESH' and d.get('packet_loss') is not None: d['status']='Offline' if d['packet_loss']>=100 else 'Online'
     return data
+_RFC1918_NETWORKS=(ipaddress.ip_network('10.0.0.0/8'),ipaddress.ip_network('172.16.0.0/12'),ipaddress.ip_network('192.168.0.0/16'))
+
 def _validate_scan_scope(network: str):
     try:
         net=ipaddress.ip_network(network,strict=False)
@@ -630,14 +638,19 @@ def _validate_scan_scope(network: str):
         raise HTTPException(400,'Network không hợp lệ, ví dụ 192.168.1.0/24')
     if net.num_addresses>1024:
         raise HTTPException(400,'Ứng dụng giới hạn tối đa 1024 địa chỉ mỗi lần quét')
-    if net.version!=4 or not net.is_private or net.is_link_local or net.is_multicast or net.is_unspecified:
+    if net.version!=4 or not any(net.subnet_of(parent) for parent in _RFC1918_NETWORKS):
         raise HTTPException(400,'Chỉ cho phép quét IPv4 private trong phạm vi được quản trị')
     return net
 
+def _ensure_web_scan_results(c):
+    c.execute('CREATE TABLE IF NOT EXISTS web_scan_results(id INTEGER PRIMARY KEY AUTOINCREMENT,scan_key TEXT,network TEXT,ip TEXT,hostname TEXT,mac TEXT,status TEXT,latency_ms REAL,created_at TEXT)')
+    c.execute('CREATE INDEX IF NOT EXISTS ix_web_scan_results_scan_key ON web_scan_results(scan_key,id)')
+    c.execute('CREATE INDEX IF NOT EXISTS ix_web_scan_results_created_at ON web_scan_results(created_at,id)')
 
 def _run_scan(network:str,max_workers:int=32,timeout:int=800,callback=None,stop_event=None):
     """Run an authorized scan and record observations without silently changing inventory."""
     net=_validate_scan_scope(network)
+    started_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     found=scan_network(
         str(net),max_workers=min(max(int(max_workers),1),64),timeout=min(max(int(timeout),100),5000),
         callback=callback,stop_event=stop_event,resolve_hostnames=True,dns_timeout=0.8,
@@ -653,9 +666,9 @@ def _run_scan(network:str,max_workers:int=32,timeout:int=800,callback=None,stop_
         if {'network','start_time','end_time','total_hosts','online_hosts','offline_hosts','status'} <= sc:
             c.execute(
                 'INSERT INTO network_scans(network,start_time,end_time,total_hosts,online_hosts,offline_hosts,status) VALUES(?,?,?,?,?,?,?)',
-                (str(net),now,now,len(found),online,max(0,len(found)-online-errors),scan_status),
+                (str(net),started_at,now,len(found),online,max(0,len(found)-online-errors),scan_status),
             )
-        c.execute('CREATE TABLE IF NOT EXISTS web_scan_results(id INTEGER PRIMARY KEY AUTOINCREMENT,scan_key TEXT,network TEXT,ip TEXT,hostname TEXT,mac TEXT,status TEXT,latency_ms REAL,created_at TEXT)')
+        _ensure_web_scan_results(c)
         for r in found:
             latency=r.get('latency_ms') if r.get('latency_ms') is not None else r.get('response')
             try: latency=float(latency) if latency is not None else None
@@ -682,7 +695,7 @@ def scan_history(limit:int=300):
 def web_scan_results(limit:int=500):
     limit=max(1,min(limit,3000))
     with get_connection() as c:
-        c.execute('CREATE TABLE IF NOT EXISTS web_scan_results(id INTEGER PRIMARY KEY AUTOINCREMENT,scan_key TEXT,network TEXT,ip TEXT,hostname TEXT,mac TEXT,status TEXT,latency_ms REAL,created_at TEXT)')
+        _ensure_web_scan_results(c)
         dcols=_cols(c,'devices')
         address_cols=[x for x in ('ip','ip_address') if x in dcols]
         inventory={}
@@ -700,7 +713,7 @@ def web_scan_results(limit:int=500):
 def import_scan_result(result_id:int):
     """Explicitly add one discovered host to inventory. Scanning itself never mutates inventory."""
     with get_connection() as c:
-        c.execute('CREATE TABLE IF NOT EXISTS web_scan_results(id INTEGER PRIMARY KEY AUTOINCREMENT,scan_key TEXT,network TEXT,ip TEXT,hostname TEXT,mac TEXT,status TEXT,latency_ms REAL,created_at TEXT)')
+        _ensure_web_scan_results(c)
         r=c.execute('SELECT * FROM web_scan_results WHERE id=?',(result_id,)).fetchone()
     if not r: raise HTTPException(404,'Không tìm thấy kết quả quét')
     d=dict(r)

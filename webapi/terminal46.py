@@ -11,6 +11,7 @@ import importlib.metadata
 import importlib.util
 import ipaddress
 import json
+import logging
 import os
 import platform
 import secrets
@@ -120,11 +121,11 @@ class Registry:
             timer=threading.Timer(TICKET_TTL+1,expire);timer.daemon=True;timer.start()
             return token
 
-    def consume(self, token, user, cookie):
+    def consume(self, token, user, session_hash):
         with self.lock:
             self.prune()
             ticket = self.tickets.get(security37.digest(token))
-            if not ticket or ticket.user_id!=user['id'] or not secrets.compare_digest(ticket.session_hash, security37.digest(cookie)):
+            if not ticket or ticket.user_id!=user['id'] or not session_hash or not secrets.compare_digest(ticket.session_hash, session_hash):
                 raise HTTPException(403, 'TERMINAL_TICKET_INVALID_OR_EXPIRED')
             del self.tickets[security37.digest(token)]
             sid = secrets.token_hex(16)
@@ -151,8 +152,14 @@ def audit(ticket, event, code=''):
         with connection() as c:
             c.execute('INSERT INTO web_terminal_audit46(actor,device_id,protocol,event,code,created_at) VALUES(?,?,?,?,?,?)',
                       (ticket.actor,ticket.device_id,ticket.protocol,event,code,utcnow()))
-    except Exception:
-        pass  # No raw payloads are logged on an audit DB error.
+    except Exception as exc:
+        # No raw payloads are logged; only event metadata/error type is emitted locally.
+        logging.getLogger('desktop.terminal.audit').error(
+            'Terminal audit write failed event=%s device_id=%s type=%s',
+            event, getattr(ticket, 'device_id', None), type(exc).__name__
+        )
+        return False
+    return True
 
 
 def _validated_target_ip(value: str, code: str) -> str:
@@ -237,7 +244,7 @@ def create_ticket(x: ConnectIn, request: Request):
             if not x.private_key.strip().startswith(('-----BEGIN OPENSSH PRIVATE KEY-----','-----BEGIN RSA PRIVATE KEY-----','-----BEGIN EC PRIVATE KEY-----','-----BEGIN PRIVATE KEY-----','-----BEGIN ENCRYPTED PRIVATE KEY-----')):
                 raise HTTPException(400,'SSH_PRIVATE_KEY_FORMAT_INVALID')
         elif not username or not password: raise HTTPException(400,'SSH_USERNAME_PASSWORD_REQUIRED')
-    ticket = Ticket(user['id'],security37.digest(request.cookies.get(security37.COOKIE,'')),user['username'],device_id,host,port,x.protocol,username,password,x.cols,x.rows)
+    ticket = Ticket(user['id'],security37.session_binding(request),user['username'],device_id,host,port,x.protocol,username,password,x.cols,x.rows)
     if x.protocol=='ssh' and x.auth_type=='private_key':
         ticket.private_key=x.private_key;ticket.passphrase=x.passphrase
     token = registry.issue(ticket)
@@ -278,9 +285,13 @@ def websocket_origin_ok(ws):
     if parsed.scheme != expected_scheme or parsed.netloc != ws.url.netloc or parsed.path not in ('','/') or parsed.query or parsed.fragment:
         return False
     if ws.headers.get('sec-fetch-site')=='cross-site': return False
-    if os.environ.get('NA_COOKIE_SECURE','1')=='0':
-        if not ws.client or ws.client.host not in ('127.0.0.1','::1','testclient'): return False
-    elif ws.url.scheme!='wss':
+    peer=(ws.client.host if ws.client else '').strip().lower()
+    host=(ws.url.hostname or '').strip().lower()
+    local=peer in ('127.0.0.1','::1','testclient') and host in ('127.0.0.1','::1','localhost','testserver')
+    # ws:// is intentionally supported only for the local desktop browser.
+    if ws.url.scheme=='ws' and not local:
+        return False
+    if ws.url.scheme not in ('ws','wss'):
         return False
     return True
 
@@ -320,7 +331,7 @@ async def terminal_socket(ws: WebSocket):
         auth=json.loads(raw)
         if not isinstance(auth,dict) or auth.get('type')!='auth' or not isinstance(auth.get('ticket'),str) or len(auth['ticket'])>128:
             raise HTTPException(403,'TERMINAL_AUTH_REQUIRED')
-        ticket,active=registry.consume(auth['ticket'],user,ws.cookies.get(security37.COOKIE,''))
+        ticket,active=registry.consume(auth['ticket'],user,security37.session_binding(ws))
         # A registered-device edit after the ticket was issued must not silently redirect access.
         # Manual IP tickets are already bound to the validated literal IP stored in the ticket.
         if ticket.device_id is not None:
@@ -471,6 +482,6 @@ def export_diagnostics(request:Request):
     u=security37.require_role(request,'Admin')
     from app_runtime import REPORT_DIR
     from webapi.reports37 import register
-    path=Path(REPORT_DIR)/('diagnostics_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json')
+    path=Path(REPORT_DIR)/('diagnostics_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f')+'_'+secrets.token_hex(4)+'.json')
     path.write_text(json.dumps(readiness_data(),ensure_ascii=False,indent=2),encoding='utf-8')
     return register(path,u['id'],'report')

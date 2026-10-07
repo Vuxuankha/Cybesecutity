@@ -175,12 +175,14 @@ def _hash_password(password, salt=None):
     """
     try:
         from argon2 import PasswordHasher
+    except (ImportError, ModuleNotFoundError):
+        PasswordHasher = None
+    if PasswordHasher is not None:
         return PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16).hash(password)
-    except Exception:
-        salt = salt or os.urandom(16)
-        rounds = 310000
-        dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, rounds)
-        return f'pbkdf2_sha256${rounds}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}'
+    salt = salt or os.urandom(16)
+    rounds = 310000
+    dk = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, rounds)
+    return f'pbkdf2_sha256${rounds}${base64.b64encode(salt).decode()}${base64.b64encode(dk).decode()}'
 
 
 def _verify_password(password, stored):
@@ -194,8 +196,8 @@ def _verify_password(password, stored):
                 return bool(PasswordHasher().verify(stored, password))
             except (VerifyMismatchError, InvalidHashError):
                 return False
-        except Exception:
-            return False
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise RuntimeError('ARGON2_DEPENDENCY_MISSING') from exc
     try:
         algo, rounds, s, expected = stored.split('$', 3)
         if algo != 'pbkdf2_sha256':
@@ -229,6 +231,33 @@ def has_local_users():
         c.close()
 
 
+CONFIG_BACKUP_MAGIC = 'NA_CFG_V1:'
+
+
+def write_config_backup(path, text):
+    """Encrypt configuration backups at rest with the local credential-vault key."""
+    path = Path(path)
+    token = _fernet().encrypt((text or '').encode('utf-8')).decode('ascii')
+    tmp_fd, tmp_name = tempfile.mkstemp(prefix='.cfg_', dir=path.parent)
+    try:
+        with os.fdopen(tmp_fd, 'w', encoding='ascii', newline='') as stream:
+            stream.write(CONFIG_BACKUP_MAGIC + token); stream.flush(); os.fsync(stream.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    return path
+
+
+def read_config_backup(path):
+    path = Path(path)
+    raw = path.read_text(encoding='utf-8', errors='strict')
+    if raw.startswith(CONFIG_BACKUP_MAGIC):
+        return _fernet(allow_create=False).decrypt(raw[len(CONFIG_BACKUP_MAGIC):].encode('ascii')).decode('utf-8')
+    # Legacy plaintext backups remain readable for migration/restore.
+    return raw
+
+
 def ssh_backup(device, credential, command, destination=None):
     import paramiko
     secret = decrypt_secret(credential['secret_enc'])
@@ -246,7 +275,7 @@ def ssh_backup(device, credential, command, destination=None):
     if destination is None:
         safe = ''.join(ch if ch.isalnum() or ch in '-_.' else '_' for ch in (device['name'] or host))
         fd, filename = tempfile.mkstemp(prefix=f"{safe}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_",
-                                        suffix='.cfg',dir=BACKUP_DIR)
+                                        suffix='.cfg.enc',dir=BACKUP_DIR)
         destination = Path(filename)
         temporary = destination
     else:
@@ -254,8 +283,9 @@ def ssh_backup(device, credential, command, destination=None):
         fd, filename = tempfile.mkstemp(prefix='.backup_',dir=destination.parent)
         temporary = Path(filename)
     try:
-        with os.fdopen(fd,'w',encoding='utf-8',newline='') as stream:
-            stream.write(data);stream.flush();os.fsync(stream.fileno())
+        os.close(fd)
+        temporary.unlink(missing_ok=True)
+        write_config_backup(temporary, data)
         if temporary != destination:
             os.replace(temporary,destination)
     except Exception:
@@ -267,6 +297,9 @@ def ssh_backup(device, credential, command, destination=None):
                   (device['name'] or host, 'SSH mã hóa', str(destination), destination.stat().st_size,
                    f"Credential: {credential['name']}", _now()))
         c.commit()
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
     finally:
         c.close()
     return destination
@@ -324,7 +357,7 @@ class CredentialManagerPage:
         d=self._dialog('Thêm Credential')
         if not d:return
         try: port=int(d['port'] or (161 if d['kind']=='SNMPv2c' else 22))
-        except: port=161 if d['kind']=='SNMPv2c' else 22
+        except (TypeError, ValueError): port=161 if d['kind']=='SNMPv2c' else 22
         c=_connect()
         try:c.execute('INSERT INTO credentials(name,kind,username,secret_enc,port,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)',(d['name'],d['kind'],d['username'],encrypt_secret(d['secret']),port,d['note'],_now(),_now()));c.commit()
         except sqlite3.IntegrityError: messagebox.showerror('Credential','Tên credential đã tồn tại.')
@@ -337,7 +370,7 @@ class CredentialManagerPage:
         c=_connect(); r=c.execute('SELECT * FROM credentials WHERE id=?',(i,)).fetchone(); c.close(); d=self._dialog('Sửa Credential',dict(r))
         if not d:return
         try: port=int(d['port'] or 22)
-        except: port=22
+        except (TypeError, ValueError): port=22
         c=_connect()
         try:
             if d['secret']: c.execute('UPDATE credentials SET name=?,kind=?,username=?,secret_enc=?,port=?,note=?,updated_at=? WHERE id=?',(d['name'],d['kind'],d['username'],encrypt_secret(d['secret']),port,d['note'],_now(),i))
@@ -547,7 +580,7 @@ class ConfigComparePage:
         vals=list(self.ac['values'])
         if self.a.get() not in vals or self.b.get() not in vals:return
         ra=self.rows[vals.index(self.a.get())];rb=self.rows[vals.index(self.b.get())]
-        try:A=Path(ra['file_path']).read_text(encoding='utf-8',errors='replace').splitlines();B=Path(rb['file_path']).read_text(encoding='utf-8',errors='replace').splitlines()
+        try:A=read_config_backup(ra['file_path']).splitlines();B=read_config_backup(rb['file_path']).splitlines()
         except Exception as e:messagebox.showerror('So sánh config',str(e));return
         diff=list(difflib.unified_diff(A,B,fromfile=self.a.get(),tofile=self.b.get(),lineterm=''))
         self.text.delete('1.0','end');self.text.insert('1.0','\n'.join(diff) if diff else 'Hai bản cấu hình không có khác biệt.');self.activity('Đã so sánh hai bản cấu hình.')

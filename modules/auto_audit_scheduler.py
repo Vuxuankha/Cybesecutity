@@ -1,4 +1,5 @@
 import sqlite3, threading
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from database.db import DB_PATH, init_database, get_connection
@@ -53,8 +54,11 @@ class AutoAuditSchedulerEngine:
     def stop(self):
         self.running=False
         if self.job:
-            try:self.root.after_cancel(self.job)
-            except Exception:pass
+            try:
+                self.root.after_cancel(self.job)
+            except Exception as exc:
+                logging.getLogger(__name__).warning('Cannot cancel auto-audit timer: %s', exc)
+                self.activity('Auto Audit Scheduler: không hủy được lịch cũ')
             self.job=None
     def _tick(self):
         if not self.running:return

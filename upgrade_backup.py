@@ -1,6 +1,7 @@
 """Consistent local snapshots before each application release's first migration."""
 import json
 import os
+import hashlib
 import shutil
 import sqlite3
 import tempfile
@@ -32,6 +33,46 @@ def _release_lock(base):
         lock.__exit__(None, None, None)
 
 
+def _sha256(path: Path) -> str:
+    h=hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024*1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _valid_existing_marker(marker: Path, base: Path, database_name: str) -> bool:
+    """Return True only when the marker still references a healthy local backup."""
+    try:
+        payload=json.loads(marker.read_text(encoding='utf-8'))
+        rel=Path(str(payload.get('backup') or ''))
+        if not rel.parts or rel.is_absolute() or '..' in rel.parts:
+            return False
+        backup=(base/rel).resolve(); root=(base/'db_backups').resolve()
+        if not backup.is_dir() or not backup.is_relative_to(root):
+            return False
+        db=backup/database_name
+        if not db.is_file() or db.stat().st_size <= 0:
+            return False
+        conn=sqlite3.connect(f'file:{db.as_posix()}?mode=ro',uri=True,timeout=5)
+        try:
+            if conn.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                return False
+        finally:
+            conn.close()
+        manifest=backup/'manifest.json'
+        if manifest.is_file():
+            meta=json.loads(manifest.read_text(encoding='utf-8'))
+            hashes=meta.get('sha256') or {}
+            for name, expected in hashes.items():
+                f=backup/name
+                if not f.is_file() or _sha256(f) != expected:
+                    return False
+        return True
+    except Exception:
+        return False
+
+
 def backup_before_release(database_path, resource_dir, version=None):
     database_path = Path(database_path)
     base = database_path.parent
@@ -41,8 +82,12 @@ def backup_before_release(database_path, resource_dir, version=None):
     marker = base / f'.release_backup_{version}.json'
     base.mkdir(parents=True, exist_ok=True)
     with _LOCK, _release_lock(base):
-        if marker.exists() or not database_path.exists() or database_path.stat().st_size == 0:
+        if not database_path.exists() or database_path.stat().st_size == 0:
             return None
+        if marker.exists():
+            if _valid_existing_marker(marker, base, database_path.name):
+                return None
+            marker.unlink(missing_ok=True)
         backups = base / 'db_backups'
         backups.mkdir(parents=True, exist_ok=True)
         pending = Path(tempfile.mkdtemp(prefix='.pending_', dir=backups))
@@ -50,18 +95,24 @@ def backup_before_release(database_path, resource_dir, version=None):
             source = sqlite3.connect(database_path, timeout=15)
             destination = sqlite3.connect(pending / database_path.name)
             try:
+                # Capture ancillary trust/key material under the same release lock and
+                # a stable database read transaction, then snapshot SQLite via backup().
+                source.execute('BEGIN')
+                for name in ('.credential.key', 'known_hosts'):
+                    if (base / name).is_file():
+                        shutil.copy2(base / name, pending / name)
                 source.backup(destination)
                 if destination.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
                     raise RuntimeError('Backup database integrity check failed')
+                source.rollback()
             finally:
                 destination.close()
                 source.close()
-            for name in ('.credential.key', 'known_hosts'):
-                if (base / name).is_file():
-                    shutil.copy2(base / name, pending / name)
+            files=sorted(p.name for p in pending.iterdir())
             metadata = {'version': version, 'created_at': datetime.now().isoformat(),
                         'database': database_path.name,
-                        'files': sorted(p.name for p in pending.iterdir())}
+                        'files': files,
+                        'sha256': {name:_sha256(pending/name) for name in files}}
             (pending / 'manifest.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
             final = backups / f"pre_app_v{version}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
             pending.rename(final)

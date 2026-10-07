@@ -175,6 +175,8 @@ def ensure_tables():
         CREATE TABLE IF NOT EXISTS web_sessions37(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,password_stamp TEXT NOT NULL,csrf TEXT NOT NULL,issued REAL NOT NULL,last_used REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS web_login_attempts37(id INTEGER PRIMARY KEY,username TEXT,peer TEXT,success INTEGER,at REAL);
         CREATE INDEX IF NOT EXISTS ix_web_login_attempts_time ON web_login_attempts37(at);
+        CREATE INDEX IF NOT EXISTS ix_web_login_attempts_user_time ON web_login_attempts37(username COLLATE NOCASE,at);
+        CREATE INDEX IF NOT EXISTS ix_web_login_attempts_peer_time ON web_login_attempts37(peer,at);
         CREATE TABLE IF NOT EXISTS web_security_log37(id INTEGER PRIMARY KEY,actor TEXT,method TEXT,path TEXT,status INTEGER,request_id TEXT,created_at TEXT);
         CREATE TABLE IF NOT EXISTS web_mfa_challenges51(
             token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,purpose TEXT NOT NULL,issued REAL NOT NULL,expires REAL NOT NULL,
@@ -236,9 +238,21 @@ def session(request: Request):
             if not r['enabled'] or now-r['issued']>ABSOLUTE_TTL or now-r['last_used']>IDLE_TTL or not secrets.compare_digest(r['password_stamp'],digest(r['password_hash'])):
                 c.execute('DELETE FROM web_sessions37 WHERE token_hash=?',(digest(token),))
                 continue
-            if now-r['last_used']>30: c.execute('UPDATE web_sessions37 SET last_used=? WHERE token_hash=?',(now,digest(token)))
+            token_hash=digest(token)
+            if now-r['last_used']>30: c.execute('UPDATE web_sessions37 SET last_used=? WHERE token_hash=?',(now,token_hash))
+            # Keep the canonical authenticated session binding on request state; callers
+            # must not re-parse a possibly duplicated Cookie header themselves.
+            request.state.session_hash=token_hash
             return {'id':r['user_id'],'username':r['username'],'role':r['role'],'enabled':r['enabled'],'csrf_token':r['csrf']}
     return None
+
+def session_binding(request: Request) -> str:
+    binding=getattr(request.state,'session_hash','')
+    if binding:
+        return binding
+    if not session(request):
+        return ''
+    return getattr(request.state,'session_hash','')
 
 def require_role(request: Request, *roles):
     u=getattr(request.state,'user',None) or session(request)
@@ -303,16 +317,16 @@ def login(username: str,password: str,request: Request,response: Response):
     with connection() as c:
         c.execute('DELETE FROM web_login_attempts37 WHERE at<?',(now-86400,))
         n=c.execute('SELECT COUNT(*) FROM web_login_attempts37 WHERE at>? AND success=0 AND username=? COLLATE NOCASE',(now-900,username)).fetchone()[0]
-        # Successful sign-ins never consume the brute-force budget. On the local
-        # desktop every account shares 127.0.0.1, so a peer-wide spray bucket would
-        # let one account lock every other account. Keep peer spray protection only
-        # for non-loopback deployments.
-        ipn=0 if _is_loopback_request(request) else c.execute('SELECT COUNT(*) FROM web_login_attempts37 WHERE at>? AND success=0 AND peer=?',(now-60,peer)).fetchone()[0]
+        # Keep a peer-wide spray budget even on localhost.  Desktop browsers share
+        # 127.0.0.1, so the local threshold is intentionally a little higher, but a
+        # local process still cannot try unlimited usernames.
+        ipn=c.execute('SELECT COUNT(*) FROM web_login_attempts37 WHERE at>? AND success=0 AND peer=?',(now-60,peer)).fetchone()[0]
+        peer_limit=60 if _is_loopback_request(request) else 30
         if n>=5:
             oldest=c.execute('SELECT MIN(at) FROM web_login_attempts37 WHERE at>? AND success=0 AND username=? COLLATE NOCASE',(now-900,username)).fetchone()[0] or now
             retry=max(1,int(900-(now-float(oldest))))
             raise HTTPException(429,'LOGIN_RATE_LIMITED; too many failed attempts',headers={'Retry-After':str(retry)})
-        if ipn>=30:
+        if ipn>=peer_limit:
             oldest=c.execute('SELECT MIN(at) FROM web_login_attempts37 WHERE at>? AND success=0 AND peer=?',(now-60,peer)).fetchone()[0] or now
             retry=max(1,int(60-(now-float(oldest))))
             raise HTTPException(429,'LOGIN_RATE_LIMITED; too many failed attempts',headers={'Retry-After':str(retry)})
@@ -364,13 +378,25 @@ def allowed_roles(method,path):
 _RATE_LOCK = __import__('threading').Lock()
 _RATE_BUCKETS = {}
 
+def _env_rate_limit(name, default):
+    raw=os.environ.get(name,str(default))
+    try:
+        value=int(raw)
+    except (TypeError,ValueError):
+        logging.getLogger('desktop.security').warning('Invalid %s=%r; using %s',name,raw,default)
+        return default
+    if not 1 <= value <= 100000:
+        logging.getLogger('desktop.security').warning('Out-of-range %s=%r; using %s',name,raw,default)
+        return default
+    return value
+
 def _rate_check(peer, method, path):
     # Lightweight in-process protection. Reverse-proxy/WAF rate limiting is still recommended for remote deployment.
     # Test/offline QA may explicitly disable this with NA_API_RATE_LIMIT=0.
     if os.environ.get('NA_API_RATE_LIMIT','1') == '0':
         return
     now=time.time(); window=60.0
-    limit=int(os.environ.get('NA_API_READS_PER_MIN','600')) if method in ('GET','HEAD','OPTIONS') else int(os.environ.get('NA_API_WRITES_PER_MIN','180'))
+    limit=_env_rate_limit('NA_API_READS_PER_MIN',600) if method in ('GET','HEAD','OPTIONS') else _env_rate_limit('NA_API_WRITES_PER_MIN',180)
     key=(peer, 'read' if method in ('GET','HEAD','OPTIONS') else 'write')
     with _RATE_LOCK:
         start,count=_RATE_BUCKETS.get(key,(now,0))
@@ -415,12 +441,13 @@ def install(app):
                     if request.method not in ('GET','HEAD','OPTIONS'):
                         if not secrets.compare_digest(request.headers.get('x-csrf-token',''),user['csrf_token']): raise HTTPException(403,'CSRF_REJECTED')
                 if request.method in ('POST','PUT','PATCH'):
-                    length=request.headers.get('content-length','0')
+                    length=request.headers.get('content-length')
                     limit = 12*1024*1024 if path in ('/api/v45/autoip/import','/api/v45/inventory/import','/api/v45/ping/import') else 3*1024*1024 if path in ('/api/reports/csv','/api/reports/xlsx') else 1024*1024 if path in ('/api/v45/autoip/targets','/api/v45/ping/targets') else 65536
-                    if not length.isdigit() or int(length)>limit: raise HTTPException(413,'REQUEST_TOO_LARGE')
-                    if len(await request.body())>limit: raise HTTPException(413,'REQUEST_TOO_LARGE')
-                    # No forms accepted by a JSON API, including login CSRF.
-                    if int(length)>0 and request.headers.get('content-type','').split(';')[0]!='application/json': raise HTTPException(415,'JSON_REQUIRED')
+                    if length is not None and (not length.isdigit() or int(length)>limit): raise HTTPException(413,'REQUEST_TOO_LARGE')
+                    body=await request.body()
+                    if len(body)>limit: raise HTTPException(413,'REQUEST_TOO_LARGE')
+                    # Validate the body actually received, not only Content-Length.
+                    if body and request.headers.get('content-type','').split(';')[0].strip().lower()!='application/json': raise HTTPException(415,'JSON_REQUIRED')
             response=await call_next(request)
         except HTTPException as e:
             response=JSONResponse({'detail':e.detail,'request_id':request_id},status_code=e.status_code,headers=e.headers)
@@ -454,10 +481,11 @@ def install(app):
             try:
                 with connection() as c:
                     c.execute('INSERT INTO web_security_log37(actor,method,path,status,request_id,created_at) VALUES(?,?,?,?,?,?)',((user or {}).get('username') or getattr(request.state,'audit_actor',None) or 'anonymous',request.method,path[:200],response.status_code,request_id,utcnow()))
-            except Exception: pass
+            except Exception as exc:
+                logging.getLogger('desktop.security').error('security audit write failed request=%s type=%s', request_id, type(exc).__name__)
         try:
             from webapi.operations47 import record_request
             record_request(request,response,time.monotonic()-started)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger('desktop.security').warning('request telemetry write failed request=%s type=%s', request_id, type(exc).__name__)
         return response

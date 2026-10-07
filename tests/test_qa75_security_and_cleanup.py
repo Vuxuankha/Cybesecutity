@@ -10,14 +10,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 
-def test_password_policy_accepts_any_nonempty_value_with_size_cap():
+def test_password_policy_rejects_trivial_and_whitespace_values():
     from modules import accounts
-    accounts.validate_password('a')
     accounts.validate_password('Password123!')
-    with pytest.raises(ValueError):
-        accounts.validate_password('')
-    with pytest.raises(ValueError):
-        accounts.validate_password('x' * 513)
+    accounts.validate_password('abcdefgh1234')
+    for weak in ('', ' ', '1', 'a', 'x'*129):
+        with pytest.raises(ValueError):
+            accounts.validate_password(weak)
 
 
 def test_public_user_normalizes_enabled_to_boolean():

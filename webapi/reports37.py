@@ -7,13 +7,14 @@ import re
 import secrets
 import os
 import time
+import tempfile
 from webapi.runtime37 import connection, utcnow, sqlite_snapshot
 
 TOKEN_TTL_SECONDS = 3600
 FILE_RETENTION_SECONDS = 7 * 86400
 GENERATED_PREFIXES = (
     'web_report_', 'web_db_', 'NetworkAutomation_DR_PRIVATE_',
-    'diagnostics_', 'device_'
+    'diagnostics_', 'diagnostics_runtime_', 'pre_retention_', 'device_'
 )
 
 
@@ -38,27 +39,93 @@ def _export_root(destination_token: str | None = None) -> Path:
     return Path(REPORT_DIR)
 
 
+def _download_kind(path: Path, base_kind: str) -> str:
+    from app_runtime import REPORT_DIR, BACKUP_DIR
+    rp=path.resolve()
+    for root in (Path(REPORT_DIR).resolve(),Path(BACKUP_DIR).resolve()):
+        if rp==root or rp.is_relative_to(root):
+            return base_kind
+    return 'external_'+base_kind
+
+
 def _safe_export_name(filename: str, extension: str) -> str:
     name = Path(str(filename or ('NetworkAutomation' + extension))).name
     name = re.sub(r'[^0-9A-Za-z._-]+', '_', name).strip('._') or ('NetworkAutomation' + extension)
     if not name.lower().endswith(extension.lower()):
         name = Path(name).stem + extension
+    stem=Path(name).stem
+    reserved={'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(1,10)),*(f'LPT{i}' for i in range(1,10))}
+    if stem.upper() in reserved:
+        name='_'+name
     return name
 
 
-def _unique_output(root: Path, filename: str) -> Path:
+def _reserve_output(root: Path, filename: str) -> Path:
+    """Atomically reserve a unique final filename across concurrent exports."""
     root.mkdir(parents=True, exist_ok=True)
-    candidate = root / filename
-    if not candidate.exists():
-        return candidate
-    stamp = time.strftime('%Y%m%d_%H%M%S')
-    base, suffix = candidate.stem, candidate.suffix
-    candidate = root / f'{base}_{stamp}{suffix}'
-    idx = 2
-    while candidate.exists():
-        candidate = root / f'{base}_{stamp}_{idx}{suffix}'
-        idx += 1
-    return candidate
+    base=Path(filename).stem; suffix=Path(filename).suffix
+    stamp=time.strftime('%Y%m%d_%H%M%S')
+    for idx in range(0,10000):
+        if idx==0:
+            candidate=root/filename
+        elif idx==1:
+            candidate=root/f'{base}_{stamp}{suffix}'
+        else:
+            candidate=root/f'{base}_{stamp}_{idx}{suffix}'
+        try:
+            fd=os.open(candidate, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
+            os.close(fd)
+            return candidate
+        except FileExistsError:
+            continue
+    raise RuntimeError('EXPORT_NAME_EXHAUSTED')
+
+
+def _atomic_write_text(out: Path, text: str) -> None:
+    fd,tmp_name=tempfile.mkstemp(prefix='.export_',suffix='.tmp',dir=out.parent)
+    tmp=Path(tmp_name)
+    try:
+        with os.fdopen(fd,'w',encoding='utf-8',newline='') as stream:
+            stream.write(text); stream.flush(); os.fsync(stream.fileno())
+        os.replace(tmp,out)
+    except Exception:
+        tmp.unlink(missing_ok=True); out.unlink(missing_ok=True); raise
+
+
+def _atomic_save_workbook(wb, out: Path) -> None:
+    fd,tmp_name=tempfile.mkstemp(prefix='.export_',suffix=out.suffix,dir=out.parent)
+    os.close(fd); tmp=Path(tmp_name)
+    try:
+        wb.save(tmp)
+        with tmp.open('rb+') as stream:
+            os.fsync(stream.fileno())
+        os.replace(tmp,out)
+    except Exception:
+        tmp.unlink(missing_ok=True); out.unlink(missing_ok=True); raise
+
+
+def _read_bounded_csv(content: str, max_rows=10000, max_cols=256):
+    rows=[]
+    for idx,row in enumerate(csv.reader(io.StringIO(content.lstrip('\ufeff'))),start=1):
+        if idx>max_rows:
+            raise ValueError('CSV_TOO_MANY_ROWS')
+        if len(row)>max_cols:
+            raise ValueError('CSV_TOO_MANY_COLUMNS')
+        safe=[]
+        for value in row:
+            value=re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]','',str(value))[:32000]
+            if value.lstrip().startswith(('=', '+', '-', '@')):
+                value="'"+value
+            safe.append(value)
+        rows.append(safe)
+    return rows
+
+
+def _csv_text(rows) -> str:
+    buf=io.StringIO(newline='')
+    writer=csv.writer(buf,lineterminator='\r\n')
+    writer.writerows(rows)
+    return '\ufeff'+buf.getvalue()
 
 
 def cleanup_generated_files(now=None):
@@ -169,9 +236,9 @@ def export_report(owner_id, destination_token: str | None = None):
                 cell.font = Font(color='176B45')
                 cell.alignment = Alignment(vertical='top', wrap_text=True)
     root = _export_root(destination_token)
-    out = _unique_output(root, 'NetworkAutomation_Report_' + time.strftime('%Y%m%d_%H%M%S') + '.xlsx')
-    wb.save(out)
-    return register(out, owner_id, 'report')
+    out = _reserve_output(root, 'NetworkAutomation_Report_' + time.strftime('%Y%m%d_%H%M%S') + '.xlsx')
+    _atomic_save_workbook(wb,out)
+    return register(out, owner_id, _download_kind(out,'report'))
 
 
 def save_csv(owner_id, filename: str, content: str, destination_token: str | None = None):
@@ -179,13 +246,11 @@ def save_csv(owner_id, filename: str, content: str, destination_token: str | Non
         raise ValueError('CSV_CONTENT_INVALID')
     if len(content.encode('utf-8')) > 2 * 1024 * 1024:
         raise ValueError('CSV_TOO_LARGE')
+    rows=_read_bounded_csv(content)
     stem = _safe_export_name(filename, '.csv')
-    out = _unique_output(_export_root(destination_token), stem)
-    text = content if content.startswith('\ufeff') else '\ufeff' + content
-    tmp = out.with_suffix(out.suffix + '.tmp')
-    tmp.write_text(text, encoding='utf-8', newline='')
-    os.replace(tmp, out)
-    return register(out, owner_id, 'csv')
+    out = _reserve_output(_export_root(destination_token), stem)
+    _atomic_write_text(out,_csv_text(rows))
+    return register(out, owner_id, _download_kind(out,'csv'))
 
 
 def save_xlsx_from_csv(owner_id, filename: str, content: str, destination_token: str | None = None):
@@ -196,20 +261,12 @@ def save_xlsx_from_csv(owner_id, filename: str, content: str, destination_token:
         raise ValueError('XLSX_CONTENT_INVALID')
     if len(content.encode('utf-8')) > 2 * 1024 * 1024:
         raise ValueError('XLSX_SOURCE_TOO_LARGE')
-    rows = list(csv.reader(io.StringIO(content.lstrip('\ufeff'))))
-    if len(rows) > 10000:
-        raise ValueError('XLSX_TOO_MANY_ROWS')
+    rows=_read_bounded_csv(content)
     wb = Workbook()
     ws = wb.active
     ws.title = 'Dữ liệu'
     for row in rows:
-        safe_row = []
-        for value in row:
-            value = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(value))[:32000]
-            if value.lstrip().startswith(('=', '+', '-', '@')):
-                value = "'" + value
-            safe_row.append(value)
-        ws.append(safe_row)
+        ws.append(row)
     if rows:
         ws.freeze_panes = 'A2'
         ws.auto_filter.ref = ws.dimensions
@@ -221,8 +278,7 @@ def save_xlsx_from_csv(owner_id, filename: str, content: str, destination_token:
         for row in ws.iter_rows(min_row=2):
             for cell in row:
                 cell.alignment = Alignment(vertical='top', wrap_text=True)
-    out = _unique_output(_export_root(destination_token), _safe_export_name(filename, '.xlsx'))
-    tmp = out.with_suffix(out.suffix + '.tmp')
-    wb.save(tmp)
-    os.replace(tmp, out)
-    return register(out, owner_id, 'xlsx')
+    out = _reserve_output(_export_root(destination_token), _safe_export_name(filename, '.xlsx'))
+    _atomic_save_workbook(wb,out)
+    return register(out, owner_id, _download_kind(out,'xlsx'))
+

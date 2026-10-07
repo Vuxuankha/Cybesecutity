@@ -557,10 +557,11 @@ def manual_backup(x:ManualBackupIn,request:Request):
     if not x.authorized: raise HTTPException(400,'Phải xác nhận nội dung cấu hình thuộc phạm vi quản trị.')
     safe=re.sub(r'[^A-Za-z0-9._-]+','_',x.device_name.strip()).strip('._-')[:80] or 'device'
     stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    path=(BACKUP_DIR/f'{safe}_manual_{stamp}.cfg').resolve()
+    path=(BACKUP_DIR/f'{safe}_manual_{stamp}.cfg.enc').resolve()
     root=BACKUP_DIR.resolve()
     if root not in path.parents: raise HTTPException(400,'Tên thiết bị không hợp lệ.')
-    path.write_text(x.content,encoding='utf-8')
+    from modules.nms_v5 import write_config_backup
+    write_config_backup(path,x.content)
     with connection() as c:
         cur=c.execute('INSERT INTO config_backups(device_name,source,file_path,size_bytes,note,created_at) VALUES(?,?,?,?,?,?)',(x.device_name.strip(),'Desktop pasted configuration',str(path),path.stat().st_size,x.note.strip(),_now()))
     return {'success':True,'id':cur.lastrowid,'filename':path.name,'size_bytes':path.stat().st_size}
@@ -590,7 +591,7 @@ def _safe_backup_file(row:dict) -> Path:
             rp=p.expanduser().resolve()
             if rp.is_file() and any(rp==root or root in rp.parents for root in roots):
                 if rp.stat().st_size>2*1024*1024: raise HTTPException(413,'Backup quá lớn để so sánh trong ứng dụng (>2 MB).')
-                if rp.suffix.lower() not in {'.txt','.cfg','.conf','.config','.log','.rsc'}: raise HTTPException(415,'Backup này không phải cấu hình text có thể so sánh.')
+                if rp.suffix.lower() not in {'.txt','.cfg','.conf','.config','.log','.rsc','.enc'} or (rp.suffix.lower()=='.enc' and not rp.name.lower().endswith('.cfg.enc')): raise HTTPException(415,'Backup này không phải cấu hình text có thể so sánh.')
                 return rp
         except OSError: pass
     raise HTTPException(404,'File backup không còn tồn tại trong thư mục backup được ứng dụng quản lý.')
@@ -615,7 +616,8 @@ def compare_configs(x:CompareIn,request:Request):
         a=c.execute('SELECT * FROM config_backups WHERE id=?',(x.backup_a,)).fetchone(); b=c.execute('SELECT * FROM config_backups WHERE id=?',(x.backup_b,)).fetchone()
     if not a or not b: raise HTTPException(404,'Không tìm thấy một trong hai backup.')
     pa=_safe_backup_file(dict(a)); pb=_safe_backup_file(dict(b))
-    A=pa.read_text(encoding='utf-8',errors='replace').splitlines(); B=pb.read_text(encoding='utf-8',errors='replace').splitlines()
+    from modules.nms_v5 import read_config_backup
+    A=read_config_backup(pa).splitlines(); B=read_config_backup(pb).splitlines()
     diff=list(difflib.unified_diff(A,B,fromfile=f'backup#{x.backup_a}',tofile=f'backup#{x.backup_b}',lineterm=''))
     adds=sum(1 for line in diff if line.startswith('+') and not line.startswith('+++')); rems=sum(1 for line in diff if line.startswith('-') and not line.startswith('---'))
     return {'same':not diff,'added':adds,'removed':rems,'truncated':len(diff)>4000,'diff':'\n'.join(diff[:4000]) if diff else 'Hai bản cấu hình không có khác biệt.'}
@@ -625,7 +627,7 @@ def config_posture(x:PostureIn,request:Request):
     require_role(request,'Admin','Operator'); ensure_tables()
     with connection() as c: r=c.execute('SELECT * FROM config_backups WHERE id=?',(x.backup_id,)).fetchone()
     if not r: raise HTTPException(404,'Không tìm thấy backup.')
-    p=_safe_backup_file(dict(r)); config=p.read_text(encoding='utf-8',errors='replace')
+    p=_safe_backup_file(dict(r)); from modules.nms_v5 import read_config_backup; config=read_config_backup(p)
     from modules.security_audit import posture
     rows=posture(config)
     return {'backup_id':x.backup_id,'device_name':r['device_name'],'checks':rows,'summary':{'PASS':sum(y.get('status')=='PASS' for y in rows),'WARN':sum(y.get('status')=='WARN' for y in rows),'HIGH':sum(y.get('status')=='HIGH' for y in rows),'REVIEW':sum(y.get('status')=='REVIEW' for y in rows)}}
@@ -642,7 +644,7 @@ def baseline_from_backup(x:BaselineFromBackupIn,request:Request):
     require_role(request,'Admin'); ensure_tables()
     with connection() as c: r=c.execute('SELECT * FROM config_backups WHERE id=?',(x.backup_id,)).fetchone()
     if not r: raise HTTPException(404,'Không tìm thấy backup.')
-    p=_safe_backup_file(dict(r)); config=p.read_text(encoding='utf-8',errors='replace')
+    p=_safe_backup_file(dict(r)); from modules.nms_v5 import read_config_backup; config=read_config_backup(p)
     from modules.security_audit import save_baseline
     save_baseline(x.device.strip(),config,'web-backup')
     return {'success':True,'device':x.device.strip(),'bytes':len(config.encode('utf-8')),'sha256':hashlib.sha256(config.encode()).hexdigest()}

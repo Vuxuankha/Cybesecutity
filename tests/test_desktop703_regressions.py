@@ -69,7 +69,10 @@ def test_portable_migration_does_not_mark_complete_after_copy_failure(tmp_path, 
     install = tmp_path / "install"
     legacy = install / "database"
     legacy.mkdir(parents=True)
-    (legacy / "network_automation.db").write_bytes(b"legacy")
+    with sqlite3.connect(legacy / "network_automation.db") as c:
+        c.execute("CREATE TABLE demo(id INTEGER PRIMARY KEY, value TEXT)")
+        c.execute("INSERT INTO demo(value) VALUES('legacy')")
+    (legacy / ".credential.key").write_bytes(b"legacy-key")
     data = tmp_path / "data"
     database = data / "database"
     database.mkdir(parents=True)
@@ -192,7 +195,7 @@ def test_source_bootstrap_never_deletes_locked_virtualenv():
     assert '-repair-%RANDOM%-%RANDOM%' in source
 
 def test_user_facing_source_launcher_is_vbs_only():
-    assert (ROOT / "00_MO_APP_NETWORKAUTOMATION.vbs").is_file()
+    assert (ROOT / "app.vbs").is_file()
     assert (ROOT / "MO_APP_NETWORKAUTOMATION.vbs").is_file()
     assert not (ROOT / "START_DESKTOP_7.bat").exists()
     assert not (ROOT / "START_DESKTOP_CORE.bat").exists()

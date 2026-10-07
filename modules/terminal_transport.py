@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import io
+import logging
 import socket
 import struct
 import threading
@@ -138,8 +139,10 @@ class TelnetTransport:
         self.closed = True
         if self.writer:
             self.writer.close()
-            try: await asyncio.wait_for(self.writer.wait_closed(), 2)
-            except Exception: pass
+            try:
+                await asyncio.wait_for(self.writer.wait_closed(), 2)
+            except (asyncio.TimeoutError, ConnectionError, OSError, RuntimeError) as exc:
+                logging.getLogger(__name__).warning('Telnet writer close did not complete cleanly: %s', exc)
 
 
 class SSHTransport:

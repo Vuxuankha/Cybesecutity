@@ -12,6 +12,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import ssl
 import subprocess
 import threading
@@ -227,18 +228,17 @@ def _known_private_asset(ip: str):
             ("SELECT 1 FROM security_assets WHERE ip=? LIMIT 1",(ip,)),
             ("SELECT 1 FROM ip_mac_inventory WHERE ip=? LIMIT 1",(ip,)),
         ]
-        # devices schemas differ across legacy versions.
-        try:
-            cols={r['name'] for r in c.execute('PRAGMA table_info(devices)').fetchall()}
-            if 'ip' in cols: checks.append(("SELECT 1 FROM devices WHERE ip=? LIMIT 1",(ip,)))
-            if 'ip_address' in cols: checks.append(("SELECT 1 FROM devices WHERE ip_address=? LIMIT 1",(ip,)))
-        except Exception:
-            pass
+        # devices schemas differ across legacy versions. PRAGMA on a missing table is safe.
+        cols={r['name'] for r in c.execute('PRAGMA table_info(devices)').fetchall()}
+        if 'ip' in cols: checks.append(("SELECT 1 FROM devices WHERE ip=? LIMIT 1",(ip,)))
+        if 'ip_address' in cols: checks.append(("SELECT 1 FROM devices WHERE ip_address=? LIMIT 1",(ip,)))
         for sql,args in checks:
             try:
                 if c.execute(sql,args).fetchone(): return True
-            except Exception:
-                continue
+            except sqlite3.OperationalError as exc:
+                if 'no such table' in str(exc).lower():
+                    continue
+                raise
     raise HTTPException(404,'ASSET_NOT_REGISTERED')
 
 

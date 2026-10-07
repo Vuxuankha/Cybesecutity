@@ -609,14 +609,10 @@ class NetworkAdapter:
                 raise RuntimeError('Thi\u1ebft b\u1ecb kh\u00f4ng tr\u1ea3 c\u1ea5u h\u00ecnh h\u1ee3p l\u1ec7; kh\u00f4ng l\u01b0u backup.')
         finally:
             client.close()
-        path = BACKUP_DIR / 'auto_ip' / (self.host.replace(':', '_') + '_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:8] + '.cfg')
+        path = BACKUP_DIR / 'auto_ip' / (self.host.replace(':', '_') + '_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:8] + '.cfg.enc')
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, 'x', encoding='utf-8') as f:
-            f.write(text)
-        try:
-            path.chmod(0o600)
-        except OSError:
-            pass
+        from modules.nms_v5 import write_config_backup
+        write_config_backup(path,text)
         with connect() as c:
             c.execute('INSERT INTO config_backups(device_name,source,file_path,size_bytes,note,created_at) VALUES(?,?,?,?,?,?)',
                       (self.host, 'Auto IP / SSH', str(path), path.stat().st_size, 'Read-only, verified host key', now()))

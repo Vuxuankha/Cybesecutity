@@ -1,5 +1,6 @@
 from modules.ui_theme import PALETTE as UI_COLORS
 import json
+import logging
 import os
 import platform
 import subprocess
@@ -126,8 +127,9 @@ class DailyAuditPage(tk.Frame):
             try:
                 from modules.advanced_pages import notify_alert
                 notify_alert(platform.node() or 'localhost','Daily Audit',label,'Critical' if code==2 else 'Warning',event_key=f'daily-audit|{platform.node()}|{code}|{__import__("datetime").date.today()}')
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.getLogger(__name__).error('Daily Audit notification failed: %s', exc)
+                self.activity_callback(f'Daily Audit: gửi cảnh báo thất bại ({type(exc).__name__})')
         if code not in (0, 1, 2) and output:
             messagebox.showwarning("Daily Audit", output[-3000:])
 

@@ -6,6 +6,7 @@ bounded ICMP probes against the already-observed private neighbors.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 import socket
@@ -57,8 +58,8 @@ def _fallback_windows_identity() -> dict:
                 choices.append((int(m.group(3)),m.group(1),m.group(2)))
         if choices:
             _,gateway,interface_ip=sorted(choices,key=lambda x:x[0])[0]
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        logging.getLogger(__name__).warning('Windows route fallback failed: %s', exc)
     try:
         import psutil
         stats=psutil.net_if_stats()

@@ -6,6 +6,7 @@ and antivirus state. No remote command execution is exposed by this module.
 from __future__ import annotations
 
 import hashlib
+import logging
 import json
 import os
 import platform
@@ -111,10 +112,11 @@ def _firewall_state() -> str:
                         return 'OFF'
                     if t == 'running' or 'status: active' in t or t.startswith('active'):
                         return 'ON'
-                except Exception:
+                except (OSError, subprocess.SubprocessError) as exc:
+                    logging.getLogger(__name__).debug('Firewall command %s unavailable/failed: %s', cmd[0], exc)
                     continue
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        logging.getLogger(__name__).warning('Firewall state detection failed: %s', exc)
     return 'UNKNOWN'
 
 

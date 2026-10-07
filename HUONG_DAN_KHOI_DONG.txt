@@ -1,4 +1,4 @@
-KHUYEN DUNG: double-click 00_MO_APP_NETWORKAUTOMATION.vbs. KHONG chay file .bat trong _internal\launcher.
+KHUYEN DUNG: double-click app.vbs. KHONG chay file .bat trong _internal\launcher.
 
 HƯỚNG DẪN KHỞI ĐỘNG NETWORKAUTOMATION DESKTOP 7.0.3
 
@@ -6,7 +6,7 @@ HƯỚNG DẪN KHỞI ĐỘNG NETWORKAUTOMATION DESKTOP 7.0.3
    Không chạy trực tiếp file bên trong WinRAR/7-Zip.
 
 2. Mở file:
-   00_MO_APP_NETWORKAUTOMATION.vbs
+   app.vbs
 
    Đây là launcher khuyến nghị vì không hiện cửa sổ CMD.
 

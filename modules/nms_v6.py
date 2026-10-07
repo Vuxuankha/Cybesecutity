@@ -1,5 +1,6 @@
 from modules.ui_ux_config import PALETTE as UI_COLORS
 import os, re, sqlite3, subprocess, threading, time
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 try:
@@ -30,15 +31,22 @@ def ensure_v6_tables():
           id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, device_id INTEGER,
           backup_id INTEGER, status TEXT, detail TEXT, created_at TEXT);
         ''')
+        cols={r['name'] for r in c.execute('PRAGMA table_info(audit_log)').fetchall()}
+        if 'actor_user_id' not in cols:
+            c.execute('ALTER TABLE audit_log ADD COLUMN actor_user_id INTEGER')
+        # Best-effort one-time linkage for legacy rows while usernames are still unique.
+        c.execute('''UPDATE audit_log SET actor_user_id=(SELECT u.id FROM app_users u WHERE u.username=audit_log.username COLLATE NOCASE)
+                     WHERE actor_user_id IS NULL AND 1=(SELECT COUNT(*) FROM app_users u WHERE u.username=audit_log.username COLLATE NOCASE)''')
+        c.execute('CREATE INDEX IF NOT EXISTS ix_audit_log_actor_user_id ON audit_log(actor_user_id,id)')
         c.commit()
     finally:c.close()
 
 
-def audit(username, role, action, target='', detail=''):
+def audit(username, role, action, target='', detail='', actor_user_id=None):
     ensure_v6_tables(); c=_connect()
     try:
-        c.execute('INSERT INTO audit_log(username,role,action,target,detail,created_at) VALUES(?,?,?,?,?,?)',
-                  (username or 'local-admin',role or 'Admin',action,target,detail,_now())); c.commit()
+        c.execute('INSERT INTO audit_log(actor_user_id,username,role,action,target,detail,created_at) VALUES(?,?,?,?,?,?,?)',
+                  (actor_user_id,username or 'local-admin',role or 'Admin',action,target,detail,_now())); c.commit()
     finally:c.close()
 
 
@@ -84,15 +92,18 @@ class MonitoringService:
                 try:
                     from modules.nms_v11 import record_ping_result
                     record_ping_result(r['id'], alive)
-                except Exception:
+                except Exception as exc:
+                    logging.getLogger(__name__).warning('Ping history hook failed for device %s: %s', r['id'], exc)
                     c=_connect(); c.execute('UPDATE network_devices SET status=? WHERE id=?',('Online' if alive else 'Offline',r['id'])); c.commit(); c.close()
                 ok+=1
-            except Exception: pass
+            except Exception as exc:
+                logging.getLogger(__name__).error('Monitoring collection failed for device %s (%s): %s', r.get('id'), r.get('ip'), exc)
         # Alert rules use the newly collected ping metrics.
         try:
             from modules.nms_v4 import evaluate_alert_rules
             evaluate_alert_rules()
-        except Exception: pass
+        except Exception as exc:
+            logging.getLogger(__name__).error('Alert-rule evaluation failed after monitoring collection: %s', exc)
         cutoff=(datetime.now()-timedelta(days=max(1,retention))).strftime('%Y-%m-%d %H:%M:%S'); c=_connect()
         for table in ('health_samples','interface_samples','snmp_samples'):
             try:c.execute(f'DELETE FROM {table} WHERE created_at < ?',(cutoff,))
@@ -167,7 +178,8 @@ class RestoreConfigPage:
         if not r:return
         p=Path(str(r[3]));
         if not p.exists():messagebox.showerror('Backup','Không tìm thấy file backup.');return
-        w=tk.Toplevel(self.parent);w.title('Xem backup');tx=tk.Text(w,wrap='none');tx.pack(fill='both',expand=True);tx.insert('1.0',p.read_text(encoding='utf-8',errors='replace'));w.geometry('900x600')
+        from modules.nms_v5 import read_config_backup
+        w=tk.Toplevel(self.parent);w.title('Xem backup');tx=tk.Text(w,wrap='none');tx.pack(fill='both',expand=True);tx.insert('1.0',read_config_backup(p));w.geometry('900x600')
     def restore(self):
         if self.user.get('role')!='Admin':messagebox.showerror('Phân quyền','Chỉ Admin được khôi phục cấu hình.');return
         r=self._row();
@@ -182,12 +194,12 @@ class RestoreConfigPage:
         def work():
             status='Failed';detail=''
             try:
-                from modules.nms_v5 import ssh_backup, decrypt_secret
+                from modules.nms_v5 import ssh_backup, decrypt_secret, read_config_backup
                 safety=ssh_backup(dict(d),dict(cred),'show running-config')
                 import paramiko
                 cli=build_strict_ssh_client(paramiko);cli.connect(d['ip'],port=int(cred['port'] or 22),username=cred['username'],password=decrypt_secret(cred['secret_enc']),timeout=10,look_for_keys=False,allow_agent=False)
                 sh=cli.invoke_shell();time.sleep(.7);sh.send('configure terminal\n');time.sleep(.4)
-                for line in path.read_text(encoding='utf-8',errors='replace').splitlines():
+                for line in read_config_backup(path).splitlines():
                     line=line.strip('\r');
                     if line and not line.startswith(('!','Building configuration','Current configuration')):sh.send(line+'\n');time.sleep(.03)
                 sh.send('end\nwrite memory\n');time.sleep(1);cli.close();status='Success';detail=f'Safety backup: {safety}'
