@@ -1,13 +1,10 @@
 """Central deny-by-default API authorization and revocable, expiring sessions."""
 from __future__ import annotations
-import base64
 import hashlib
-import hmac
 import logging
 import os
 import re
 import secrets
-import struct
 import time
 from urllib.parse import urlsplit
 from fastapi import HTTPException, Request, Response
@@ -17,7 +14,7 @@ from webapi.runtime37 import connection, utcnow
 COOKIE = 'na_session'
 ABSOLUTE_TTL = 8 * 3600
 IDLE_TTL = 30 * 60
-PUBLIC = {'/api/health', '/api/auth/login', '/api/auth/mfa/verify'}
+PUBLIC = {'/api/health', '/api/auth/login'}
 ADMIN_PREFIXES = ('/api/v46', '/api/v43', '/api/v41', '/api/credentials', '/api/device-credentials', '/api/snmpv3/credentials', '/api/ssh/known-hosts', '/api/accounts', '/api/diagnostics', '/api/security-log', '/api/audit-log', '/api/connection-profiles', '/api/snmpv3/assignments')
 OPERATOR_GET = ('/api/operations', '/api/autoip', '/api/ssh-audit', '/api/config-backups', '/api/ssh/hostkey', '/api/jobs')
 # Read operations above still require login. Unrecognised writes are refused even for Admin.
@@ -27,7 +24,6 @@ WRITE_RULES = [
  ('DELETE',r'/api/connection-profiles/[^/]+',('Admin',)),
  ('POST',r'/api/autoip/targets/[^/]+/profile',('Admin',)),
  ('POST', r'/api/auth/logout', ('Admin','Analyst','Operator','Viewer')),
- ('POST', r'/api/auth/mfa/verify', ('Admin','Analyst','Operator','Viewer')),
  ('POST', r'/api/auth/password', ('Admin','Analyst','Operator','Viewer')),
  ('POST', r'/api/devices', ('Admin',)),
  ('PUT|DELETE', r'/api/devices/\d+', ('Admin',)),
@@ -46,7 +42,10 @@ WRITE_RULES = [
  ('POST', r'/api/snmp/device/\d+/refresh', ('Admin','Operator')),
  ('POST', r'/api/ssh-audit/\d+', ('Admin',)),
  ('POST', r'/api/config-backup/\d+', ('Admin',)),
+ ('POST', r'/api/desktop/export-directory', ('Admin','Analyst','Operator')),
  ('POST', r'/api/reports/export', ('Admin','Operator')),
+ ('POST', r'/api/reports/csv', ('Admin','Analyst','Operator')),
+ ('POST', r'/api/reports/xlsx', ('Admin','Analyst','Operator')),
  ('POST|PUT|DELETE', r'/api/credentials(/\d+)?', ('Admin',)),
  ('POST|DELETE', r'/api/devices/\d+/credential(/[A-Za-z]+)?', ('Admin',)),
  ('POST', r'/api/devices/\d+/ssh-test', ('Admin','Operator')),
@@ -125,7 +124,6 @@ WRITE_RULES = [
  ('POST', r'/api/v51/password-strength', ('Admin','Analyst','Operator','Viewer')),
  ('POST', r'/api/v51/tls/check', ('Admin','Analyst','Operator')),
  ('PUT', r'/api/v51/settings', ('Admin',)),
- ('POST', r'/api/v51/auth/mfa/reset/\d+', ('Admin',)),
  ('POST', r'/api/v51/alerts/\d+/ack', ('Admin','Analyst','Operator')),
  ('POST', r'/api/v51/alerts/\d+/(resolve|reopen)', ('Admin','Analyst')),
  ('POST', r'/api/v51/vault', ('Admin',)),
@@ -156,12 +154,16 @@ WRITE_RULES = [
  ('POST', r'/api/v57/daily/reviewed', ('Admin','Analyst','Operator')),
  # v5.9 network quality and explicit bandwidth diagnostics.
  ('POST', r'/api/v59/network/line-test', ('Admin','Analyst','Operator')),
+ ('POST', r'/api/v59/network/diagnostics', ('Admin','Analyst','Operator')),
  ('POST', r'/api/v59/network/speed-test', ('Admin','Analyst','Operator')),
  ('POST', r'/api/v59/network/optimize', ('Admin',)),
- # v6.3 Kali defensive worker. Uses the same cookie session + central CSRF/RBAC guard.
- ('POST', r'/api/v1/kali/config', ('Admin',)),
- ('POST', r'/api/v1/kali/test', ('Admin','Operator')),
- ('POST', r'/api/v1/kali/run', ('Admin','Operator')),
+ # QA79 Windows-local defensive and authorized diagnostic profiles.
+ ('POST', r'/api/v1/windows-tools/run', ('Admin','Analyst','Operator')),
+ ('POST', r'/api/v50/network/connectivity/probe', ('Admin','Operator')),
+ ('POST', r'/api/v50/network/identity/refresh', ('Admin','Operator')),
+ ('POST', r'/api/v46/diagnostics/export', ('Admin',)),
+ ('POST', r'/api/v47/diagnostics/export', ('Admin',)),
+ ('POST', r'/api/v45/remote/\d+/rdp-export', ('Admin','Operator')),
 ]
 
 def digest(value: str):
@@ -190,14 +192,16 @@ def ensure_tables():
         if 'mfa_enabled' not in cols: c.execute('ALTER TABLE app_users ADD COLUMN mfa_enabled INTEGER DEFAULT 0')
         if 'mfa_secret_enc' not in cols: c.execute('ALTER TABLE app_users ADD COLUMN mfa_secret_enc TEXT DEFAULT NULL')
         if 'mfa_updated_at' not in cols: c.execute('ALTER TABLE app_users ADD COLUMN mfa_updated_at TEXT DEFAULT NULL')
-        default_mfa = 0 if os.environ.get('NA_MFA_REQUIRED','1') == '0' else 1
-        c.execute("INSERT OR IGNORE INTO web_security_policy51(id,mfa_required,updated_at) VALUES(1,?,datetime('now'))",(default_mfa,))
+        # MFA was removed from Desktop 7.0.3 at user request. Keep the legacy
+        # columns/tables only so older databases migrate safely, but disable all
+        # enrollment/challenges and clear legacy secrets.
+        c.execute("INSERT OR IGNORE INTO web_security_policy51(id,mfa_required,updated_at) VALUES(1,0,datetime('now'))")
+        c.execute("UPDATE web_security_policy51 SET mfa_required=0,updated_at=datetime('now') WHERE id=1")
+        c.execute("DELETE FROM web_mfa_challenges51")
+        c.execute("UPDATE app_users SET mfa_enabled=0,mfa_secret_enc=NULL WHERE COALESCE(mfa_enabled,0)<>0 OR mfa_secret_enc IS NOT NULL")
 
 def public_user(row):
-    out={k:row[k] for k in ('id','username','role','enabled')}
-    try: out['mfa_enabled']=bool(row['mfa_enabled'])
-    except Exception: out['mfa_enabled']=False
-    return out
+    return {k:row[k] for k in ('id','username','role','enabled')}
 
 def _session_tokens(request: Request):
     """Return every candidate session cookie in wire order.
@@ -225,7 +229,7 @@ def session(request: Request):
     now = time.time()
     with connection() as c:
         for token in tokens:
-            r = c.execute('''SELECT s.*,u.username,u.role,u.enabled,u.password_hash,COALESCE(u.mfa_enabled,0) mfa_enabled FROM web_sessions37 s
+            r = c.execute('''SELECT s.*,u.username,u.role,u.enabled,u.password_hash FROM web_sessions37 s
                              JOIN app_users u ON u.id=s.user_id WHERE s.token_hash=?''',(digest(token),)).fetchone()
             if not r:
                 continue
@@ -233,7 +237,7 @@ def session(request: Request):
                 c.execute('DELETE FROM web_sessions37 WHERE token_hash=?',(digest(token),))
                 continue
             if now-r['last_used']>30: c.execute('UPDATE web_sessions37 SET last_used=? WHERE token_hash=?',(now,digest(token)))
-            return {'id':r['user_id'],'username':r['username'],'role':r['role'],'enabled':r['enabled'],'mfa_enabled':bool(r['mfa_enabled']),'csrf_token':r['csrf']}
+            return {'id':r['user_id'],'username':r['username'],'role':r['role'],'enabled':r['enabled'],'csrf_token':r['csrf']}
     return None
 
 def require_role(request: Request, *roles):
@@ -241,34 +245,6 @@ def require_role(request: Request, *roles):
     if not u: raise HTTPException(401,'LOGIN_REQUIRED')
     if roles and u['role'] not in roles: raise HTTPException(403,'PERMISSION_DENIED')
     return u
-
-def _totp_secret():
-    return base64.b32encode(secrets.token_bytes(20)).decode().rstrip('=')
-
-
-def _totp(secret: str, counter: int, digits: int=6):
-    key=base64.b32decode(secret + '=' * (-len(secret) % 8), casefold=True)
-    msg=struct.pack('>Q',counter)
-    d=hmac.new(key,msg,hashlib.sha1).digest(); off=d[-1]&0x0f
-    num=struct.unpack('>I',d[off:off+4])[0]&0x7fffffff
-    return str(num%(10**digits)).zfill(digits)
-
-
-def _verify_totp(secret: str, code: str, window: int=1):
-    code=''.join(ch for ch in str(code or '') if ch.isdigit())
-    if len(code)!=6: return False
-    counter=int(time.time())//30
-    return any(hmac.compare_digest(_totp(secret,counter+i),code) for i in range(-window,window+1))
-
-
-def _issue_mfa_challenge(c,user_id,purpose):
-    token=secrets.token_urlsafe(32); now=time.time()
-    c.execute('DELETE FROM web_mfa_challenges51 WHERE expires<?',(now,))
-    c.execute('DELETE FROM web_mfa_challenges51 WHERE user_id=?',(int(user_id),))
-    c.execute('INSERT INTO web_mfa_challenges51(token_hash,user_id,purpose,issued,expires) VALUES(?,?,?,?,?)',
-              (digest(token),int(user_id),purpose,now,now+300))
-    return token
-
 
 def _is_loopback_request(request: Request) -> bool:
     """True only for the local browser path explicitly supported without TLS."""
@@ -320,7 +296,7 @@ def _finish_login(c,row,request,response):
 
 
 def login(username: str,password: str,request: Request,response: Response):
-    from modules.nms_v5 import _verify_password, _hash_password, encrypt_secret, decrypt_secret
+    from modules.nms_v5 import _verify_password, _hash_password
     username=username.strip()
     if not 1<=len(username)<=64 or password=='': raise HTTPException(401,'INVALID_CREDENTIALS')
     ensure_tables(); now=time.time(); peer=request.client.host if request.client else 'unknown'
@@ -359,71 +335,8 @@ def login(username: str,password: str,request: Request,response: Response):
             upgraded=_hash_password(password)
             c.execute('UPDATE app_users SET password_hash=?,updated_at=datetime(\'now\') WHERE id=?',(upgraded,r['id']))
             r=c.execute('SELECT * FROM app_users WHERE id=?',(r['id'],)).fetchone()
-        required=bool(c.execute('SELECT mfa_required FROM web_security_policy51 WHERE id=1').fetchone()[0])
-        if bool(r['mfa_enabled']) and r['mfa_secret_enc']:
-            challenge=_issue_mfa_challenge(c,r['id'],'VERIFY'); c.commit()
-            return {'success':True,'mfa_required':True,'challenge':challenge,'user':{'username':r['username']}}
-        if required:
-            secret=_totp_secret()
-            # Release the current SQLite write transaction before the credential vault
-            # initializes its encryption key. A brand-new install may need to inspect
-            # the DB while creating .credential.key, which must not deadlock this login.
-            c.commit()
-            encrypted_secret=encrypt_secret(secret)
-            c.execute("UPDATE app_users SET mfa_secret_enc=?,mfa_enabled=0,mfa_updated_at=datetime('now') WHERE id=?",(encrypted_secret,r['id']))
-            challenge=_issue_mfa_challenge(c,r['id'],'ENROLL'); c.commit()
-            issuer=os.environ.get('NA_TOTP_ISSUER','NetworkAutomation Cybersecurity')
-            from urllib.parse import quote
-            uri=f'otpauth://totp/{quote(issuer)}:{quote(r["username"])}?secret={secret}&issuer={quote(issuer)}&algorithm=SHA1&digits=6&period=30'
-            return {'success':True,'mfa_enroll_required':True,'challenge':challenge,'secret':secret,'otpauth_uri':uri,'user':{'username':r['username']}}
         result=_finish_login(c,r,request,response); c.commit(); return result
 
-
-def verify_mfa_login(challenge: str,code: str,request: Request,response: Response):
-    from modules.nms_v5 import decrypt_secret
-    ensure_tables(); now=time.time()
-    with connection() as c:
-        ch=c.execute('SELECT * FROM web_mfa_challenges51 WHERE token_hash=?',(digest(challenge or ''),)).fetchone()
-        if not ch or float(ch['expires'])<now:
-            raise HTTPException(401,'MFA_CHALLENGE_EXPIRED')
-        r=c.execute('SELECT * FROM app_users WHERE id=?',(ch['user_id'],)).fetchone()
-        if not r or not r['enabled'] or not r['mfa_secret_enc']:
-            raise HTTPException(401,'MFA_NOT_AVAILABLE')
-        # The public MFA endpoint can now attribute failed attempts to the account
-        # without exposing the username in the response.
-        request.state.audit_actor=str(r['username'])
-        try:
-            secret=decrypt_secret(r['mfa_secret_enc'])
-        except Exception as exc:
-            raise HTTPException(500,'MFA_SECRET_UNAVAILABLE') from exc
-        if not _verify_totp(secret,code):
-            attempts=int(ch['attempts'] or 0)+1
-            if attempts >= 5:
-                c.execute('DELETE FROM web_mfa_challenges51 WHERE token_hash=?',(digest(challenge),))
-                c.commit()
-                raise HTTPException(429,'MFA_ATTEMPT_LIMIT_REACHED',headers={'Retry-After':'300'})
-            c.execute('UPDATE web_mfa_challenges51 SET attempts=?,last_attempt=? WHERE token_hash=?',(attempts,now,digest(challenge)))
-            c.commit()
-            raise HTTPException(401,'INVALID_MFA_CODE')
-        if ch['purpose']=='ENROLL':
-            c.execute("UPDATE app_users SET mfa_enabled=1,mfa_updated_at=datetime('now') WHERE id=?",(r['id'],))
-            r=c.execute('SELECT * FROM app_users WHERE id=?',(r['id'],)).fetchone()
-        elif not r['mfa_enabled']:
-            raise HTTPException(401,'MFA_DISABLED')
-        c.execute('DELETE FROM web_mfa_challenges51 WHERE token_hash=?',(digest(challenge),))
-        result=_finish_login(c,r,request,response); c.commit(); return result
-
-
-def reset_mfa(user_id: int) -> bool:
-    ensure_tables()
-    with connection() as c:
-        cur=c.execute("UPDATE app_users SET mfa_enabled=0,mfa_secret_enc=NULL,mfa_updated_at=datetime('now') WHERE id=?",(int(user_id),))
-        if not cur.rowcount:
-            return False
-        c.execute('DELETE FROM web_sessions37 WHERE user_id=?',(int(user_id),))
-        c.execute('DELETE FROM web_mfa_challenges51 WHERE user_id=?',(int(user_id),))
-        c.commit()
-        return True
 
 # Constant-format PBKDF2 hash only for equal-cost failed verification; not an account.
 _DUMMY_HASH='pbkdf2_sha256$240000$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
@@ -503,7 +416,7 @@ def install(app):
                         if not secrets.compare_digest(request.headers.get('x-csrf-token',''),user['csrf_token']): raise HTTPException(403,'CSRF_REJECTED')
                 if request.method in ('POST','PUT','PATCH'):
                     length=request.headers.get('content-length','0')
-                    limit = 12*1024*1024 if path in ('/api/v45/autoip/import','/api/v45/inventory/import','/api/v45/ping/import') else 1024*1024 if path in ('/api/v45/autoip/targets','/api/v45/ping/targets') else 65536
+                    limit = 12*1024*1024 if path in ('/api/v45/autoip/import','/api/v45/inventory/import','/api/v45/ping/import') else 3*1024*1024 if path in ('/api/reports/csv','/api/reports/xlsx') else 1024*1024 if path in ('/api/v45/autoip/targets','/api/v45/ping/targets') else 65536
                     if not length.isdigit() or int(length)>limit: raise HTTPException(413,'REQUEST_TOO_LARGE')
                     if len(await request.body())>limit: raise HTTPException(413,'REQUEST_TOO_LARGE')
                     # No forms accepted by a JSON API, including login CSRF.

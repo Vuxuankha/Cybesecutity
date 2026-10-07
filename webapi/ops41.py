@@ -83,8 +83,11 @@ def _timestamp_column(c, table):
 
 def _quick_check(db_path: Path):
     try:
-        with sqlite3.connect(db_path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5) as c:
+        c = sqlite3.connect(db_path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
+        try:
             result = c.execute('PRAGMA quick_check').fetchone()[0]
+        finally:
+            c.close()
         return result
     except Exception as exc:
         return 'ERROR:' + type(exc).__name__
@@ -178,16 +181,66 @@ def production_status(request: Request):
             pass
 
     libraries = {name: bool(importlib.util.find_spec(name)) for name in ('paramiko', 'pysnmp', 'openpyxl', 'fastapi', 'uvicorn')}
+    quick_check = _quick_check(db_path)
     checks = [
-        {'name': 'Database quick_check', 'status': 'PASS' if _quick_check(db_path) == 'ok' else 'FAIL', 'detail': _quick_check(db_path)},
-        {'name': 'Disk free', 'status': 'PASS' if disk.free >= 2 * 1024**3 else 'WARN', 'detail': f'{disk.free/1024**3:.1f} GB'},
-        {'name': 'Recent DB backup', 'status': 'PASS' if latest_backup_age is not None and latest_backup_age <= 7*86400 else 'WARN', 'detail': latest_backup or 'No backup found'},
-        {'name': 'Job queue', 'status': 'PASS' if jobs['Running'] <= 2 and jobs['Queued'] <= 16 else 'WARN', 'detail': json.dumps(jobs)},
-        {'name': 'Scheduler thread', 'status': 'PASS' if scheduler.thread and scheduler.thread.is_alive() else 'FAIL', 'detail': f"enabled={schedules['enabled']} overdue={schedules['overdue']}"},
-        {'name': 'SSH library', 'status': 'PASS' if libraries['paramiko'] else 'WARN', 'detail': 'paramiko'},
-        {'name': 'SNMP library', 'status': 'PASS' if libraries['pysnmp'] else 'WARN', 'detail': 'pysnmp'},
-        {'name': 'LAN path evidence', 'status': 'PASS' if lan['total'] and not (lan.get('NO_ROUTE',0) or lan.get('PATH_UNVERIFIED',0)) else 'WARN', 'detail': json.dumps(lan)},
-        {'name': 'Server target validation', 'status': 'PASS' if invalid_server_targets==0 else 'WARN', 'detail': f'invalid={invalid_server_targets}'},
+        {
+            'name': 'Database quick_check',
+            'status': 'PASS' if quick_check == 'ok' else 'FAIL',
+            'detail': quick_check,
+            'detail_vi': 'Cơ sở dữ liệu hoạt động bình thường' if quick_check == 'ok' else f'Cơ sở dữ liệu cần kiểm tra: {quick_check}',
+        },
+        {
+            'name': 'Disk free',
+            'status': 'PASS' if disk.free >= 2 * 1024**3 else 'WARN',
+            'detail': f'{disk.free/1024**3:.1f} GB',
+            'detail_vi': f'Còn trống {disk.free/1024**3:.1f} GB',
+        },
+        {
+            'name': 'Recent DB backup',
+            'status': 'PASS' if latest_backup_age is not None and latest_backup_age <= 7*86400 else 'WARN',
+            'detail': latest_backup or 'No backup found',
+            'detail_vi': f'Bản sao gần nhất: {latest_backup}' if latest_backup else 'Chưa tìm thấy bản sao cơ sở dữ liệu',
+        },
+        {
+            'name': 'Job queue',
+            'status': 'PASS' if jobs['Running'] <= 2 and jobs['Queued'] <= 16 else 'WARN',
+            'detail': json.dumps(jobs),
+            'detail_vi': f"Đang chờ {jobs['Queued']} · Đang chạy {jobs['Running']} · Lỗi {jobs['Failed']} · Gián đoạn {jobs['Interrupted']}",
+        },
+        {
+            'name': 'Scheduler thread',
+            'status': 'PASS' if scheduler.thread and scheduler.thread.is_alive() else 'FAIL',
+            'detail': f"enabled={schedules['enabled']} overdue={schedules['overdue']}",
+            'detail_vi': f"Đang bật {schedules['enabled']} lịch · Quá hạn {schedules['overdue']}",
+        },
+        {
+            'name': 'SSH library',
+            'status': 'PASS' if libraries['paramiko'] else 'WARN',
+            'detail': 'paramiko',
+            'detail_vi': 'Thư viện SSH Paramiko đã sẵn sàng' if libraries['paramiko'] else 'Thiếu thư viện SSH Paramiko',
+        },
+        {
+            'name': 'SNMP library',
+            'status': 'PASS' if libraries['pysnmp'] else 'WARN',
+            'detail': 'pysnmp',
+            'detail_vi': 'Thư viện SNMP PySNMP đã sẵn sàng' if libraries['pysnmp'] else 'Thiếu thư viện SNMP PySNMP',
+        },
+        {
+            'name': 'LAN path evidence',
+            'status': 'PASS' if lan['total'] and not (lan.get('NO_ROUTE',0) or lan.get('PATH_UNVERIFIED',0)) else 'WARN',
+            'detail': json.dumps(lan),
+            'detail_vi': (
+                f"Tổng {lan['total']} · Có phản hồi {lan.get('REACHABLE', 0)} · "
+                f"Không có đường mạng {lan.get('NO_ROUTE', 0)} · Chưa xác minh {lan.get('PATH_UNVERIFIED', 0)} · "
+                f"Không phản hồi ICMP {lan.get('NO_ICMP_REPLY', 0)}"
+            ),
+        },
+        {
+            'name': 'Server target validation',
+            'status': 'PASS' if invalid_server_targets == 0 else 'WARN',
+            'detail': f'invalid={invalid_server_targets}',
+            'detail_vi': 'Tất cả máy chủ đích đều hợp lệ' if invalid_server_targets == 0 else f'Có {invalid_server_targets} máy chủ đích không hợp lệ',
+        },
     ]
     overall = 'PASS' if all(x['status'] == 'PASS' for x in checks) else ('FAIL' if any(x['status'] == 'FAIL' for x in checks) else 'WARN')
     return {

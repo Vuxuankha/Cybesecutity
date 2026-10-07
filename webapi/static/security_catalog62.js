@@ -1,8 +1,10 @@
 'use strict';
-/* Hotfix7: complete 35-function cybersecurity catalog.
-   White-hat pages are defensive/local analysis or existing authorized operations.
-   Red-team pages are simulation-only/offline and intentionally do not execute attacks. */
+/* Cybersecurity catalog: 35 legacy labs plus Windows-native White/Red diagnostic centers.
+   White-hat pages are defensive/local analysis or authorized operations. Red-team active checks are
+   limited to private targets and tightly bounded diagnostics; exploit/persistence/credential attacks are absent. */
 (()=>{
+  if(window.__naSecurityCatalog62Installed)return;
+  window.__naSecurityCatalog62Installed=true;
   Object.assign(tr,{
     bluetls62:'SSL/TLS Certificate Auditor', blueids62:'Internal IDS / NTA', blueapi62:'API Security Auditor',
     bluesecrets62:'Secrets & Source Code Scanner', bluemalware62:'Malware Hash Scanner', bluefirewall62:'Firewall / IP Blocking',
@@ -18,15 +20,15 @@
     redupload62:'⇧',redredirect62:'↪',redssrf62:'⇆',redxxe62:'XML',redhash62:'#',redsupply62:'⌘',redsession62:'◌',redmitm62:'⇄',redtunnel62:'⇢',redprivesc62:'⇈',redpersist62:'⟳',redevasion62:'⌫'
   });
 
-  const white62=['bluehub61','scan','vuln51','bluetls62','blueids62','blueweb61','blueapi62','bluesecrets62','bluelog61','bluemalware62','bluepass61','bluefirewall62','blueiam62','blueir62','bluecontainer62','bluefim62','blueedr62','bluephish62'];
-  const red62=['redhub61','redinject61','redxss61','redidor61','redupload62','redredirect62','redssrf62','redxxe62','redauth61','redpacket61','redload61','redhash62','redsupply62','redsession62','redmitm62','redtunnel62','redprivesc62','redpersist62','redevasion62'];
+  const white62=['bluehub61','wintools79','scan','vuln51','bluetls62','blueids62','blueweb61','blueapi62','bluesecrets62','bluelog61','bluemalware62','bluepass61','bluefirewall62','blueiam62','blueir62','bluecontainer62','bluefim62','blueedr62','bluephish62'];
+  const red62=['redlocal79','redhub61','redinject61','redxss61','redidor61','redupload62','redredirect62','redssrf62','redxxe62','redauth61','redpacket61','redload61','redhash62','redsupply62','redsession62','redmitm62','redtunnel62','redprivesc62','redpersist62','redevasion62'];
 
   const whiteGroup=groups.find(g=>String(g[0]).includes('HACKER MŨ TRẮNG'));
-  const redGroup=groups.find(g=>String(g[0]).includes('HACKER MŨ ĐEN'));
+  const redGroup=groups.find(g=>String(g[0]).includes('HACKER MŨ ĐỎ'));
   if(whiteGroup) whiteGroup[1]=white62;
   if(redGroup) redGroup[1]=red62;
 
-  const safety=`<div class="safe-lab61"><b>LAB AN TOÀN</b><span>Mô phỏng chỉ đánh giá dữ liệu mẫu/local. Không phát payload khai thác, không dò credential, không pivot, không duy trì truy cập và không xóa log.</span></div>`;
+  const safety=`<div class="safe-lab61"><b>LAB AN TOÀN</b><span>Mô phỏng chủ yếu đánh giá dữ liệu mẫu/local. Windows Local Lab có thể chạy chẩn đoán private target được ủy quyền và tải nhẹ tối đa 5 HEAD request; không exploit, không dò credential, không pivot, không persistence và không xóa log.</span></div>`;
   const hero=(kind,eyebrow,title,desc)=>`<div class="mode-hero61 ${kind}"><div><div class="eyebrow">${esc(eyebrow)}</div><h2>${esc(title)}</h2><p>${esc(desc)}</p></div></div>`;
   const result=(title,html)=>panel(title,`<div class="mode-result61">${html}</div>`);
   const rows=(items)=>table(items,[['Kiểm tra','name'],['Trạng thái','status',badge],['Chi tiết','detail']]);
@@ -89,17 +91,15 @@
 
   /* Replace the two hubs with the complete architecture map. */
   const card=(icon,title,desc,page)=>`<button class="mode-card61" data-action="page" data-page="${page}"><span class="mode-icon61">${icon}</span><span><b>${esc(title)}</b><small>${esc(desc)}</small></span><i>›</i></button>`;
-  pages.bluehub61=async()=>hero('white','BLUE TEAM / DEFENDER / GRC','Hacker Mũ Trắng · 17 chức năng','Khám phá, đánh giá, giám sát, phản ứng và GRC. Các tác vụ chủ động chỉ dùng trên tài sản được phép; công cụ mới ưu tiên phân tích local.')+`<div class="mode-grid61">${[
-    ['⌕','1. Network & Asset Discovery','ARP/Ping discovery, IP/MAC','scan'],['◈','2. Port & Service Vulnerability','Cổng, service, CVE assessment','vuln51'],['🔒','3. SSL/TLS Auditor','Hết hạn, protocol, signature','bluetls62'],['⌁','4. Internal IDS / NTA','Flow anomaly & scan signals','blueids62'],['⌁','5. Web Security Auditor','Security headers & exposure review','blueweb61'],['API','6. API Security Auditor','Auth/method/header review','blueapi62'],['{}','7. Secrets / SAST','Hard-coded secret patterns','bluesecrets62'],['≡','8. Log Analysis / Mini SIEM','401/403/404 & suspicious IP','bluelog61'],['#','9. Malware Hash Scanner','SHA-256 local file hash','bluemalware62'],['⚿','10. Password & Breach Audit','Password strength, breach guidance','bluepass61'],['⊘','11. Firewall / IP Blocking','Blocklist planning','bluefirewall62'],['♙','12. IAM & Privilege Auditor','Excess privilege/inactive accounts','blueiam62'],['↻','13. Incident Response Playbook','Response workflow builder','blueir62'],['▣','14. Container Security Scanner','Dockerfile hardening','bluecontainer62'],['≡','15. File Integrity Monitoring','SHA-256 baseline compare','bluefim62'],['◉','16. Mini EDR','Process behavior analysis','blueedr62'],['✉','17. Phishing Awareness','Safe awareness campaign planner','bluephish62']
+  pages.bluehub61=async()=>hero('white','BLUE TEAM / DEFENDER / GRC','Hacker Mũ Trắng · Windows-native + 17 chức năng','Khám phá, đánh giá, giám sát, phản ứng và GRC. Các tác vụ chủ động chỉ dùng trên tài sản được phép; công cụ mới ưu tiên phân tích local.')+`<div class="mode-grid61">${[
+    ['▣','Windows Local Tools','PowerShell/CMD diagnostics whitelist','wintools79'],['⌕','1. Network & Asset Discovery','ARP/Ping discovery, IP/MAC','scan'],['◈','2. Port & Service Vulnerability','Cổng, service, CVE assessment','vuln51'],['🔒','3. SSL/TLS Auditor','Hết hạn, protocol, signature','bluetls62'],['⌁','4. Internal IDS / NTA','Flow anomaly & scan signals','blueids62'],['⌁','5. Web Security Auditor','Security headers & exposure review','blueweb61'],['API','6. API Security Auditor','Auth/method/header review','blueapi62'],['{}','7. Secrets / SAST','Hard-coded secret patterns','bluesecrets62'],['≡','8. Log Analysis / Mini SIEM','401/403/404 & suspicious IP','bluelog61'],['#','9. Malware Hash Scanner','SHA-256 local file hash','bluemalware62'],['⚿','10. Password & Breach Audit','Password strength, breach guidance','bluepass61'],['⊘','11. Firewall / IP Blocking','Blocklist planning','bluefirewall62'],['♙','12. IAM & Privilege Auditor','Excess privilege/inactive accounts','blueiam62'],['↻','13. Incident Response Playbook','Response workflow builder','blueir62'],['▣','14. Container Security Scanner','Dockerfile hardening','bluecontainer62'],['≡','15. File Integrity Monitoring','SHA-256 baseline compare','bluefim62'],['◉','16. Mini EDR','Process behavior analysis','blueedr62'],['✉','17. Phishing Awareness','Safe awareness campaign planner','bluephish62']
   ].map(x=>card(...x)).join('')}</div>`;
 
-  pages.redhub61=async()=>hero('red','RED TEAM / ATTACKER SIMULATION','Hacker Mũ Đen · 18 mô phỏng Lab','Mô phỏng tư duy tấn công để kiểm thử control nhưng không phát payload, không chiếm credential, không pivot và không tạo persistence.')+safety+`<div class="mode-grid61">${[
-    ['>_','18. SQLi / Command Injection','Input defense simulator','redinject61'],['<>','19. XSS / CSRF','Encoding & CSRF control lab','redxss61'],['⇄','20. Broken Access / IDOR','Authorization model lab','redidor61'],['⇧','21. File Upload','Upload policy lab','redupload62'],['↪','22. Open Redirect','Redirect allowlist lab','redredirect62'],['⇆','23. SSRF','URL/egress policy lab','redssrf62'],['XML','24. XXE','XML parser policy lab','redxxe62'],['⚿','25. Brute-force Defense','Rate-limit/lockout model','redauth61'],['≋','26. Packet Inspector','Offline packet text analysis','redpacket61'],['⇈','27. DDoS / Load Capacity','Capacity math, 0 traffic','redload61'],['#','28. Password Hash Resilience','KDF/salt assessment','redhash62'],['⌘','29. Supply Chain','Dependency hygiene lab','redsupply62'],['◌','30. Session Security','Cookie/session control lab','redsession62'],['⇄','31. MitM Defense','TLS validation control lab','redmitm62'],['⇢','32. Tunneling / Pivot Defense','Detection signals only','redtunnel62'],['⇈','33. Privilege Escalation Defense','Local hardening checklist','redprivesc62'],['⟳','34. Persistence Detection','Startup/task/service review','redpersist62'],['⌫','35. Anti-Forensics Detection','Log gap/integrity signals','redevasion62']
+  pages.redhub61=async()=>hero('red','RED TEAM / ATTACKER SIMULATION','Hacker Mũ Đỏ · Windows-native + 18 mô phỏng Lab','Mô phỏng tư duy tấn công để kiểm thử control nhưng không phát payload, không chiếm credential, không pivot và không tạo persistence.')+safety+`<div class="mode-grid61">${[
+    ['▤','Windows Local Lab','Recon/config/connectivity/TLS an toàn','redlocal79'],['>_','18. SQLi / Command Injection','Input defense simulator','redinject61'],['<>','19. XSS / CSRF','Encoding & CSRF control lab','redxss61'],['⇄','20. Broken Access / IDOR','Authorization model lab','redidor61'],['⇧','21. File Upload','Upload policy lab','redupload62'],['↪','22. Open Redirect','Redirect allowlist lab','redredirect62'],['⇆','23. SSRF','URL/egress policy lab','redssrf62'],['XML','24. XXE','XML parser policy lab','redxxe62'],['⚿','25. Brute-force Defense','Rate-limit/lockout model','redauth61'],['≋','26. Packet Inspector','Offline packet text analysis','redpacket61'],['⇈','27. DDoS / Load Capacity','Capacity math + tùy chọn 1–5 HEAD private','redload61'],['#','28. Password Hash Resilience','KDF/salt assessment','redhash62'],['⌘','29. Supply Chain','Dependency hygiene lab','redsupply62'],['◌','30. Session Security','Cookie/session control lab','redsession62'],['⇄','31. MitM Defense','TLS validation control lab','redmitm62'],['⇢','32. Tunneling / Pivot Defense','Detection signals only','redtunnel62'],['⇈','33. Privilege Escalation Defense','Local hardening checklist','redprivesc62'],['⟳','34. Persistence Detection','Startup/task/service review','redpersist62'],['⌫','35. Anti-Forensics Detection','Log gap/integrity signals','redevasion62']
   ].map(x=>card(...x)).join('')}</div>`;
-
-  const oldGo62=window.go;
-  window.go=async function(page){const r=await oldGo62(page);if(red62.includes(page)){const b=$('#breadcrumb');if(b)b.textContent='🥷 HACKER MŨ ĐEN · LAB CÔ LẬP';}else if(white62.includes(page)){const b=$('#breadcrumb');if(b)b.textContent='🛡 HACKER MŨ TRẮNG · PHÒNG THỦ';}return r;};
+  document.addEventListener('na:page-rendered',e=>{const page=e.detail?.page,b=$('#breadcrumb');if(red62.includes(page)&&b)b.textContent='🥷 HACKER MŨ ĐỎ · LAB CÔ LẬP';else if(white62.includes(page)&&b)b.textContent='🛡 HACKER MŨ TRẮNG · PHÒNG THỦ';});
 
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>navigation(),{once:true});else navigation();
-  window.naSecurityCatalog62={version:NA_UI_VERSION,legacy_overlay:'hotfix7',white_features:17,red_lab_features:18,total_features:35,white62,red62,red_team_mode:'simulation-only'};
+  window.naSecurityCatalog62={version:NA_UI_VERSION,legacy_overlay:'hotfix7',white_features:18,red_lab_features:19,total_features:37,white62,red62,red_team_mode:'authorized-bounded-diagnostics'};
 })();

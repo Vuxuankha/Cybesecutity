@@ -210,11 +210,11 @@ def test_viewer_does_not_trigger_native_ping_and_probe_is_bounded(monkeypatch):
 def test_probe_gets_disable_automatic_retry_and_health_is_single_flight():
     app = text("webapi/static/app.js")
     d70 = text("webapi/static/desktop70.js")
-    kali = text("webapi/static/kali63.js")
-    assert "options.retry!==false" in app
+    win = text("webapi/static/windows_tools79.js")
+    assert "options.retry===true" in app
     assert "network-overview" in d70 and "{retry:false}" in d70
     assert "hostkey/'+v.device_id" in app and "{retry:false}" in app
-    assert "probe-hostkey" in kali and "{retry:false}" in kali
+    assert "/v1/windows-tools/run" in win and "method:'POST'" in win
     assert "let naHealthPromise=null" in app
     assert "if(naHealthPromise)return naHealthPromise" in app
 
@@ -224,4 +224,4 @@ def test_operational_asset_loader_parallelizes_only_independent_modules():
     assert "Promise.all(['workbench45.js','vendor/xterm.js'].map(naLoadScript))" in app
     assert "Promise.all(['operations47.js','operations50.js','cybersecurity51.js','enterprise592.js'].map(naLoadScript))" in app
     # Dependent security overlays remain ordered.
-    assert app.index("naLoadScript('security_modes61.js')") < app.index("naLoadScript('security_catalog62.js')") < app.index("naLoadScript('hotfix9_kali_red.js')")
+    assert app.index("naLoadScript('security_modes61.js')") < app.index("naLoadScript('security_catalog62.js')") < app.index("naLoadScript('windows_tools79.js')")

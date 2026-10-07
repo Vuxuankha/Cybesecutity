@@ -22,7 +22,12 @@ const wb45 = {
     cpu: 'CPU (%)', memory: 'RAM (%)', ram: 'RAM (%)',
     data_state: '\u0110\u1ed9 m\u1edbi d\u1eef li\u1ec7u', profile: 'Profile',
     count: 'S\u1ed1 b\u1ea3n ghi', state: 'Tr\u1ea1ng th\u00e1i', steps: 'C\u00e1c b\u01b0\u1edbc',
-    note: 'Ghi ch\u00fa', conflict: 'Xung \u0111\u1ed9t MAC', mac: 'MAC'
+    note: 'Ghi ch\u00fa', conflict: 'Xung \u0111\u1ed9t MAC', mac: 'MAC',
+    PASS:'Đạt', WARN:'Cảnh báo', FAIL:'Lỗi', READY:'Sẵn sàng', OFF:'Tắt',
+    'CONFIG INCOMPLETE':'Thiếu cấu hình', Queued:'Đang chờ', Running:'Đang chạy',
+    Failed:'Lỗi', Interrupted:'Gián đoạn', Completed:'Hoàn tất', Stopped:'Đã dừng',
+    OK:'Đạt', Unknown:'Chưa xác định', Invalid:'Không hợp lệ', Active:'Đang hoạt động', Disabled:'Đã tắt',
+    saved_path:'Đã lưu tại', download_url:'Đường dẫn tải', filename:'Tên file'
   }
 };
 const label45 = key => wb45.labels[key] || String(key).replace(/_/g, ' ');
@@ -52,7 +57,7 @@ function gridMarkup45(id) {
   const total = rows.length, maxPage = Math.max(1, Math.ceil(total / g.size));
   g.page = Math.max(0, Math.min(g.page, maxPage - 1));
   const shown = rows.slice(g.page*g.size,(g.page+1)*g.size);
-  const tools = `<div class="grid-tools"><label class="search-label">T\u00ecm / l\u1ecdc<input data-grid-filter="${id}" value="${esc(g.filter)}" placeholder="IP, t\u00ean, tr\u1ea1ng th\u00e1i..." aria-label="T\u00ecm trong b\u1ea3ng"></label><span class="muted">${total} / ${g.rows.length} d\u00f2ng</span>${button('Xu\u1ea5t CSV','grid-export',{grid:id})}</div>`;
+  const tools = `<div class="grid-tools"><label class="search-label">T\u00ecm / l\u1ecdc<input data-grid-filter="${id}" value="${esc(g.filter)}" placeholder="IP, t\u00ean, tr\u1ea1ng th\u00e1i..." aria-label="T\u00ecm trong b\u1ea3ng"></label><span class="muted">${total} / ${g.rows.length} d\u00f2ng</span>${button('Xu\u1ea5t CSV...','grid-export',{grid:id})}${button('Xu\u1ea5t Excel...','grid-export-xlsx',{grid:id},'primary')}</div>`;
   const body = `<div class="scroll"><table><thead><tr>${g.cols.map(c=>`<th><button class="sort-button" data-action="grid-sort" data-grid="${id}" data-key="${esc(c[1])}">${esc(c[0])}${g.sortKey===c[1]?(g.direction===1?' \u2191':' \u2193'):''}</button></th>`).join('')}${g.rowActions?'<th>Thao t\u00e1c</th>':''}</tr></thead><tbody>${shown.map(r=>`<tr>${g.cols.map(c=>`<td>${c[2]?c[2](r[c[1]],r):scalar45(r[c[1]],c[1])}</td>`).join('')}${g.rowActions?`<td class="actions">${g.rowActions(r)}</td>`:''}</tr>`).join('') || `<tr><td colspan="${g.cols.length+(g.rowActions?1:0)}" class="muted">Kh\u00f4ng c\u00f3 d\u1eef li\u1ec7u ph\u00f9 h\u1ee3p.</td></tr>`}</tbody></table></div>`;
   const pager = `<div class="grid-pager"><span>${total?g.page*g.size+1:0}\u2013${Math.min((g.page+1)*g.size,total)} / ${total}</span>${button('\u2190 Tr\u01b0\u1edbc','grid-prev',{grid:id})}<span>Trang ${g.page+1}/${maxPage}</span>${button('Sau \u2192','grid-next',{grid:id})}</div>`;
   return tools+body+pager;
@@ -87,7 +92,7 @@ function structured45(value, title='', depth=0, debug=true) {
   if(typeof value!=='object')return `<div class="text-result">${esc(String(value))}</div>`;
   const out=[];
   const download=value.download_url;
-  if(typeof download==='string' && /^\/api\/downloads\/[A-Za-z0-9_-]+$/.test(download))out.push(`<a class="download-link" href="${esc(download)}" download>\u2193 T\u1ea3i ${esc(value.name||'k\u1ebft qu\u1ea3')}</a>`);
+  if(value.saved_relative_path)out.push(`<div class="inline-notice"><b>File đã lưu:</b> ${esc(value.saved_relative_path)}</div>`);
   if(value.summary && typeof value.summary==='object' && !Array.isArray(value.summary)){
     out.push(`<div class="cards result-metrics">${Object.entries(value.summary).filter(([,v])=>primitive45(v)).map(([k,v])=>metric(label45(k),v,k==='REACHABLE'||k==='OK'?'green':k==='ERROR'?'red':'')).join('')}</div>`);
   }
@@ -112,9 +117,13 @@ Object.assign(actions,{
   'grid-prev':async b=>{const g=wb45.grids.get(b.dataset.grid);if(g){g.page--;repaintGrid45(b.dataset.grid);}},
   'grid-next':async b=>{const g=wb45.grids.get(b.dataset.grid);if(g){g.page++;repaintGrid45(b.dataset.grid);}},
   'grid-sort':async b=>{const g=wb45.grids.get(b.dataset.grid);if(g){g.direction=g.sortKey===b.dataset.key?-g.direction:1;g.sortKey=b.dataset.key;repaintGrid45(b.dataset.grid);}},
-  'grid-export':async b=>{const g=wb45.grids.get(b.dataset.grid);if(!g)return;const rows=g.rows.filter(r=>!g.filter||JSON.stringify(r).toLocaleLowerCase().includes(g.filter.toLocaleLowerCase()));const safe=v=>{let x=typeof v==='object'?JSON.stringify(v??''):String(v??'');if(/^[\s]*[=+@-]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"';};const csv=[g.cols.map(c=>safe(c[0])).join(','),...rows.map(r=>g.cols.map(c=>safe(r[c[1]])).join(','))].join('\r\n');download45('\uFEFF'+csv,'NetworkAutomation-'+state.page+'.csv','text/csv;charset=utf-8');}
+  'grid-export':async b=>exportGrid45(b,'csv'),
+  'grid-export-xlsx':async b=>exportGrid45(b,'xlsx')
 });
-function download45(content,name,type){const a=document.createElement('a'),url=URL.createObjectURL(new Blob([content],{type}));a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+function gridCsv45(g){const rows=g.rows.filter(r=>!g.filter||JSON.stringify(r).toLocaleLowerCase().includes(g.filter.toLocaleLowerCase()));const safe=v=>{let x=typeof v==='object'?JSON.stringify(v??''):String(v??'');if(/^[\s]*[=+@-]/.test(x))x="'"+x;return '"'+x.replace(/"/g,'""')+'"';};return [g.cols.map(c=>safe(c[0])).join(','),...rows.map(r=>g.cols.map(c=>safe(r[c[1]])).join(','))].join('\r\n');}
+async function exportGrid45(b,format){const g=wb45.grids.get(b.dataset.grid);if(!g)return;const picked=await chooseExportDirectory();if(!picked)return;const csv=gridCsv45(g);const isExcel=format==='xlsx';const filename='NetworkAutomation-'+state.page+(isExcel?'.xlsx':'.csv');const r=await api(isExcel?'/reports/xlsx':'/reports/csv',{method:'POST',body:JSON.stringify({filename,content:csv,destination_token:picked.token})});const saved=exportSavedText(r,picked);toast('Đã xuất '+(isExcel?'Excel':'CSV')+': '+saved);immediate45({...r,saved_to:saved},isExcel?'Xuất Excel':'Xuất CSV');}
+
+async function download45(content,name,type){const picked=await chooseExportDirectory();if(!picked)return null;const isXlsx=String(type||'').includes('spreadsheet')||String(name||'').toLowerCase().endsWith('.xlsx');if(isXlsx||String(type||'').includes('csv')||String(name||'').toLowerCase().endsWith('.csv'))return api(isXlsx?'/reports/xlsx':'/reports/csv',{method:'POST',body:JSON.stringify({filename:name,content:String(content),destination_token:picked.token})});throw new Error('Chỉ hỗ trợ xuất CSV hoặc Excel.');}
 document.addEventListener('input',e=>{const id=e.target.dataset.gridFilter;if(!id)return;const g=wb45.grids.get(id);if(g){g.filter=e.target.value;g.page=0;repaintGrid45(id,true);}});
 
 /* Page-owned job results: navigation never cancels tracking or moves the result. */
@@ -285,6 +294,7 @@ const oldDevices45=pages.devices;
 pages.devices=async()=>{const html=await oldDevices45();return `<div class="toolbar">${canWrite()?button('Ping to\u00e0n b\u1ed9','job',{op:'PING_ALL'})+button('M\u1edf gi\u00e1m s\u00e1t Ping','page',{page:'pingmonitor'}):''}${isAdmin()?button('Nh\u1eadp IP t\u1eeb file','inventory-import45'):''}</div>`+html;};
 actions['inventory-import45']=async()=>importModal45('inventory');
 pages.managed=async()=>{state.managed=await api('/managed-devices');return panel('Thi\u1ebft b\u1ecb qu\u1ea3n tr\u1ecb',`<p class="caption">ID qu\u1ea3n tr\u1ecb d\u00f9ng cho SSH, SNMP, Backup. Th\u00eam IP t\u1ea1i Thi\u1ebft b\u1ecb r\u1ed3i ch\u1ecdn Enable managed tasks.</p>`+table(state.managed,[['ID','id'],['IP','ip'],['T\u00ean','name'],['Vendor','vendor'],['Lo\u1ea1i','device_type'],['V\u1ecb tr\u00ed','location'],['C\u1eadp nh\u1eadt','updated_at']],r=>(isAdmin()?button('S\u1eeda','managed-edit45',{id:r.id})+button('C\u1ea5u h\u00ecnh k\u1ebft n\u1ed1i','device-setup',{id:r.id}):'')+(canWrite()?button('SNMP','job',{op:'SNMP',id:r.id})+button('SSH','job',{op:'SSH_TEST',id:r.id}):'')));};
+actions['rdp-export45']=async b=>{const r=await api('/v45/remote/'+encodeURIComponent(b.dataset.id)+'/rdp-export',{method:'POST',body:'{}'});toast('Đã tạo RDP: '+(r.saved_relative_path||r.name));modal('File RDP',kv(r));};
 actions['managed-edit45']=async b=>{const r=state.managed.find(x=>x.id===Number(b.dataset.id));if(r)modal('Thi\u1ebft b\u1ecb '+r.ip,form('managed-edit45-form',`<input name="id" type="hidden" value="${r.id}">`+input('T\u00ean','name','text',r.name)+input('Vendor','vendor','text',r.vendor||'',false)+input('Lo\u1ea1i','device_type','text',r.device_type||'',false)+input('V\u1ecb tr\u00ed','location','text',r.location||'',false),'L\u01b0u'));};
 forms['managed-edit45-form']=async f=>{const v=vals(f),id=v.id;delete v.id;await api('/v45/managed/'+id,{method:'PUT',body:JSON.stringify(v)});$('#dialog').close();await go('managed');};
 pages.ipmac=async()=>{
@@ -320,7 +330,7 @@ forms['interface-poll-form']=async f=>{const v=vals(f),ifindices=v.ifindices.spl
 forms['remote-form']=async f=>{const v=vals(f);await task45('REMOTE_CHECK',[Number(v.device_id)],{service:v.service});};
 actions['notify-test']=async b=>{if(confirm('G\u1eedi th\u00f4ng b\u00e1o th\u1eed t\u1edbi k\u00eanh \u0111\u00e3 c\u1ea5u h\u00ecnh?'))await task45('NOTIFICATION_TEST',[],{channel:b.dataset.channel});};
 const oldRemote45=pages.remote;
-pages.remote=async()=>{const d=await api('/managed-devices');return await oldRemote45()+panel('M\u1edf k\u1ebft n\u1ed1i t\u1eeb m\u00e1y c\u1ee7a b\u1ea1n',table(d,[['IP','ip'],['T\u00ean','name']],r=>canWrite()?`<a class="button-link" href="/api/v45/remote/${r.id}/rdp" download>T\u1ea3i file RDP</a>`:''));};
+pages.remote=async()=>{const d=await api('/managed-devices');return await oldRemote45()+panel('M\u1edf k\u1ebft n\u1ed1i t\u1eeb m\u00e1y c\u1ee7a b\u1ea1n',table(d,[['IP','ip'],['T\u00ean','name']],r=>canWrite()?button('Tạo file RDP','rdp-export45',{id:r.id},'primary'):''));};
 const oldDaily45=pages.dailyaudit;
 pages.dailyaudit=async()=>{let html=await oldDaily45();const cap=await api('/v45/capabilities');if(!cap.daily_audit_available){const t=document.createElement('template');t.innerHTML=html;t.content.querySelector('[data-action=daily-audit-run]')?.setAttribute('disabled','');html=t.innerHTML;}return (!cap.daily_audit_available?'<div class="notice47 warn">Daily Audit c\u1ea7n m\u00e1y Windows n\u00e0y l\u00e0 Windows. Kh\u00f4ng ch\u1ea1y PowerShell audit tr\u00ean Linux.</div>':'')+html;};
 

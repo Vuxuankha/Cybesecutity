@@ -90,7 +90,7 @@ class UserIn(StrictBaseModel):
     enabled:bool=True
 class PasswordIn(StrictBaseModel):
     old_password:str=Field(default='',max_length=512)
-    new_password:str=Field(min_length=12,max_length=512)
+    new_password:str=Field(min_length=1,max_length=512)
     confirmation:str=Field(default='',max_length=512)
 
 def account_call(fn,*args):
@@ -130,11 +130,16 @@ def download(token:str,request:Request):
     from webapi.reports37 import ensure_registry
     from app_runtime import REPORT_DIR,BACKUP_DIR
     ensure_registry()
+    import time
     with connection() as c:r=c.execute('SELECT * FROM web_downloads37 WHERE token=?',(token,)).fetchone()
     if not r: raise HTTPException(404,'Download not found')
+    if r['expires_epoch'] is not None and float(r['expires_epoch'])<time.time():
+        with connection() as c:c.execute('DELETE FROM web_downloads37 WHERE token=?',(token,))
+        raise HTTPException(410,'Download expired')
     if (r['kind']=='database' and u['role']!='Admin') or (r['owner_id']!=u['id'] and u['role']!='Admin'): raise HTTPException(403,'Download not authorized')
     p=Path(r['path']).resolve();root=Path(BACKUP_DIR if r['kind']=='database' else REPORT_DIR).resolve()
     if not p.is_relative_to(root) or not p.is_file(): raise HTTPException(404,'File unavailable')
+    with connection() as c:c.execute('DELETE FROM web_downloads37 WHERE token=?',(token,))
     return FileResponse(p,filename=r['name'],media_type='application/octet-stream')
 
 # Explicit public UI assets only. The 4.6 UI includes nested vendor assets;
@@ -155,10 +160,10 @@ STATIC_ASSETS = {
     'security_modes61.js': 'text/javascript',
     'security_modes61.css': 'text/css',
     'security_catalog62.js': 'text/javascript',
-    'kali63.js': 'text/javascript',
-    'hotfix9_kali_red.js': 'text/javascript',
+    'windows_tools79.js': 'text/javascript',
     'hotfix10_nav_core.js': 'text/javascript',
     'desktop70.js': 'text/javascript',
+    'i18n84.js': 'text/javascript',
     'app.js': 'text/javascript',
     'style.css': 'text/css',
     'workbench45.js': 'text/javascript',

@@ -263,7 +263,7 @@ def test_connection(request: Request):
     return {'connection': 'ok' if result['ok'] else 'failed', **result}
 
 
-@router.get('/tools')
+@router.post('/tools')
 def tools(request: Request):
     require_role(request,'Admin','Operator')
     cmd = "for x in nmap curl openssl tshark tcpdump python3 ss; do if command -v $x >/dev/null 2>&1; then printf '%s=READY\\n' $x; else printf '%s=MISSING\\n' $x; fi; done"
@@ -289,32 +289,6 @@ def run_profile(body: KaliRunIn, request: Request):
         cmd = f"curl -sS -D - -o /dev/null --max-time 15 --max-redirs 0 --resolve {shlex.quote(resolve_value)} {shlex.quote(u)}"
     elif profile == 'worker_network_state':
         cmd = "ip -brief addr 2>/dev/null; printf '\\n--- routes ---\\n'; ip route 2>/dev/null; printf '\\n--- sockets ---\\n'; ss -tunap 2>/dev/null | head -200"
-    elif profile == 'session_cookie_audit':
-        # Defensive check only: fetch response headers from an authorized private URL.
-        u, resolve_value, _approved_ip = _private_url_target(target)
-        cmd = f"curl -sS -D - -o /dev/null --max-time 15 --max-redirs 0 --resolve {shlex.quote(resolve_value)} {shlex.quote(u)}"
-    elif profile == 'tls_transport_audit':
-        # Defensive transport inspection; no interception/MitM is performed.
-        t = _private_host(target); p = int(body.port or 443)
-        cmd = "timeout 15 openssl s_client -brief -verify_return_error -connect %s:%d </dev/null 2>&1" % (shlex.quote(t), p)
-    elif profile == 'component_versions':
-        # Inventory the Kali worker's own security-tool versions for patch review.
-        cmd = "printf '%s\\n' '--- nmap ---'; nmap --version 2>/dev/null | head -3; printf '%s\\n' '--- openssl ---'; openssl version 2>/dev/null; printf '%s\\n' '--- curl ---'; curl --version 2>/dev/null | head -2; printf '%s\\n' '--- python ---'; python3 --version 2>/dev/null"
-    elif profile == 'http_capacity_probe':
-        # Intentionally tiny bounded probe: 10 sequential requests, private URL only.
-        # DNS is pinned with curl --resolve and redirects are disabled.
-        u, resolve_value, _approved_ip = _private_url_target(target)
-        q_url = shlex.quote(u)
-        q_resolve = shlex.quote(resolve_value)
-        cmd = (
-            "tmp=$(mktemp); trap 'rm -f \"$tmp\"' EXIT; ok=0; i=0; "
-            "while [ $i -lt 10 ]; do "
-            f"t=$(curl -sS -o /dev/null --max-time 5 --max-redirs 0 --resolve {q_resolve} -w '%{{time_total}}' {q_url} 2>/dev/null); "
-            "rc=$?; [ $rc -eq 0 ] && ok=$((ok+1)); printf '%s\n' \"${t:-0}\" >> \"$tmp\"; "
-            "i=$((i+1)); sleep 0.2; done; "
-            "awk -v ok=\"$ok\" 'BEGIN{sum=0;max=0;n=0} {v=$1+0;sum+=v;if(v>max)max=v;n++} "
-            "END{printf \"requests=10\\nsuccess=%d\\navg_ms=%.2f\\nmax_ms=%.2f\\n\",ok,(n?sum/n*1000:0),max*1000}' \"$tmp\""
-        )
     else:
         raise HTTPException(400, 'UNSUPPORTED_KALI_PROFILE')
     result = _exec(cmd, timeout=60)

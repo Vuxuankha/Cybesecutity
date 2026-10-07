@@ -652,16 +652,16 @@ def managed_edit(device_id:int,x:ManagedEdit,request:Request):
     return {'success':True}
 
 
-@router.get('/remote/{device_id}/rdp')
+@router.post('/remote/{device_id}/rdp-export')
 def remote_rdp(device_id:int,request:Request):
-    require_role(request,'Admin','Operator')
-    with connection() as c:
-        r=c.execute('SELECT * FROM network_devices WHERE id=?',(device_id,)).fetchone()
-    if not r:
-        raise HTTPException(404,'Managed device not found')
+    u=require_role(request,'Admin','Operator')
+    with connection() as c:r=c.execute('SELECT * FROM network_devices WHERE id=?',(device_id,)).fetchone()
+    if not r:raise HTTPException(404,'Managed device not found')
     ip=str(ipaddress.ip_address(ip_value(dict(r))))
     text=f'full address:s:{ip}:3389\r\nprompt for credentials:i:1\r\nauthentication level:i:2\r\nredirectclipboard:i:0\r\n'
-    return Response(text,media_type='application/x-rdp',headers={'Content-Disposition':f'attachment; filename="device-{device_id}.rdp"'})
+    from webapi.reports37 import register
+    path=Path(REPORT_DIR)/f'device_{device_id}_{secrets.token_hex(4)}.rdp';path.write_text(text,encoding='utf-8',newline='')
+    return register(path,u['id'],'report')
 
 
 EXTENDED_ROLES={'RESOURCE_POLL':('Admin','Operator'),'INTERFACE_POLL':('Admin','Operator'),

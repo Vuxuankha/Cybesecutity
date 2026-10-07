@@ -94,30 +94,42 @@ def _local_ip() -> str:
 def _firewall_state() -> str:
     try:
         if os.name == 'nt':
-            p=subprocess.run(['netsh','advfirewall','show','allprofiles','state'],capture_output=True,text=True,timeout=5,**hidden_subprocess_kwargs())
-            t=(p.stdout+' '+p.stderr).upper()
-            if 'STATE' in t and 'ON' in t: return 'ON'
-            if 'STATE' in t and 'OFF' in t: return 'OFF'
+            p = subprocess.run(['netsh','advfirewall','show','allprofiles','state'], capture_output=True, text=True, timeout=5, **hidden_subprocess_kwargs())
+            states = []
+            for line in (p.stdout + '\n' + p.stderr).splitlines():
+                parts = line.strip().upper().split()
+                if len(parts) >= 2 and parts[0] == 'STATE' and parts[-1] in {'ON','OFF'}:
+                    states.append(parts[-1])
+            if states:
+                return 'ON' if all(v == 'ON' for v in states) else 'OFF'
         else:
-            for cmd in (['ufw','status'],['firewall-cmd','--state']):
+            for cmd in (['ufw','status'], ['firewall-cmd','--state']):
                 try:
-                    p=subprocess.run(cmd,capture_output=True,text=True,timeout=3,**hidden_subprocess_kwargs())
-                    t=(p.stdout+' '+p.stderr).lower()
-                    if 'active' in t or 'running' in t: return 'ON'
-                    if 'inactive' in t or 'not running' in t: return 'OFF'
-                except Exception: pass
-    except Exception: pass
+                    p = subprocess.run(cmd, capture_output=True, text=True, timeout=3, **hidden_subprocess_kwargs())
+                    t = (p.stdout + ' ' + p.stderr).strip().lower()
+                    if 'inactive' in t or 'not running' in t or 'disabled' in t:
+                        return 'OFF'
+                    if t == 'running' or 'status: active' in t or t.startswith('active'):
+                        return 'ON'
+                except Exception:
+                    continue
+    except Exception:
+        pass
     return 'UNKNOWN'
 
 
 def _antivirus_state() -> str:
-    if os.name != 'nt': return 'UNKNOWN'
+    if os.name != 'nt':
+        return 'UNKNOWN'
     try:
-        cmd=['powershell','-NoProfile','-NonInteractive','-Command',"$x=Get-MpComputerStatus -ErrorAction Stop; if($x.AntivirusEnabled -and $x.RealTimeProtectionEnabled){'ON'}elseif($x.AntivirusEnabled){'ON'}else{'OFF'}"]
-        p=subprocess.run(cmd,capture_output=True,text=True,timeout=8,**hidden_subprocess_kwargs())
-        t=p.stdout.strip().upper()
-        if t in {'ON','OFF'}: return t
-    except Exception: pass
+        cmd = ['powershell','-NoProfile','-NonInteractive','-Command',
+               "$x=Get-MpComputerStatus -ErrorAction Stop; if($x.AntivirusEnabled -and $x.RealTimeProtectionEnabled){'ON'}else{'OFF'}"]
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=8, **hidden_subprocess_kwargs())
+        t = p.stdout.strip().upper()
+        if t in {'ON','OFF'}:
+            return t
+    except Exception:
+        pass
     return 'UNKNOWN'
 
 

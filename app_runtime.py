@@ -29,28 +29,58 @@ def install_root() -> Path:
     return Path(__file__).resolve().parent
 
 
-def data_root() -> Path:
-    """Writable application data.
+def _writable_data_dir(path: Path) -> Path | None:
+    """Return a writable directory or ``None`` without aborting application import."""
+    try:
+        resolved = path.expanduser().resolve()
+        resolved.mkdir(parents=True, exist_ok=True)
+        probe = resolved / '.na_write_probe'
+        probe.write_text('ok', encoding='ascii')
+        probe.unlink(missing_ok=True)
+        return resolved
+    except Exception:
+        return None
 
-    Source/dev mode keeps the historical project layout for backwards
-    compatibility. A packaged Windows build writes under LOCALAPPDATA so it
-    never needs write permission in Program Files.
+
+def data_root() -> Path:
+    """Resolve a writable data directory, preferring portable application data.
+
+    A malformed/unwritable optional override must never make the desktop fail
+    before its error UI can be shown.  The last fallback is the per-user app
+    data directory on Windows.
     """
-    override = os.environ.get("NETWORK_AUTOMATION_DATA_DIR")
+    candidates: list[Path] = []
+    override = str(os.environ.get('NETWORK_AUTOMATION_DATA_DIR') or '').strip()
     if override:
-        return Path(override).expanduser().resolve()
-    config = install_root() / "data_location.json"
-    if config.exists():
-        value = json.loads(config.read_text(encoding="utf-8")).get("data_dir")
-        if not value or not Path(value).is_absolute():
-            raise ValueError("data_location.json phải chứa data_dir là đường dẫn tuyệt đối.")
-        return Path(value).resolve()
-    if not is_frozen():
-        return Path(__file__).resolve().parent
-    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        candidates.append(Path(override))
+
+    config = install_root() / 'data_location.json'
+    if config.is_file():
+        try:
+            payload = json.loads(config.read_text(encoding='utf-8'))
+            value = str(payload.get('data_dir') or '').strip()
+            if value and Path(value).is_absolute():
+                candidates.append(Path(value))
+        except Exception as exc:
+            # Logging may not yet be configured during module import.  Preserve
+            # a diagnostic hint for the launcher instead of crashing import.
+            os.environ['NA_DATA_LOCATION_WARNING'] = type(exc).__name__
+
+    candidates.append(install_root() / 'runtime_data')
+    base = os.environ.get('LOCALAPPDATA') or os.environ.get('APPDATA')
     if base:
-        return Path(base) / APP_NAME
-    return Path.home() / f".{APP_NAME.lower()}"
+        candidates.append(Path(base) / APP_NAME)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        usable = _writable_data_dir(candidate)
+        if usable is not None:
+            return usable
+    raise RuntimeError('Không tìm thấy thư mục dữ liệu có quyền ghi cho NetworkAutomation.')
 
 
 RESOURCE_DIR = resource_root()
@@ -75,30 +105,54 @@ def data_path(*parts: str) -> Path:
 
 
 def migrate_portable_data_once() -> None:
-    """Import data placed next to an installed EXE on first run.
+    """Idempotently import missing legacy state into the active data folder.
 
-    To migrate an older portable/source installation, place its ``database``
-    folder next to NetworkAutomation.exe before first launch. Existing AppData
-    is never overwritten.
+    The marker is informational only.  Every start may safely check for files
+    that are still missing, so a marker accidentally present in a release ZIP
+    cannot suppress migration on a different PC.
     """
-    if not is_frozen():
-        return
-    marker = DATA_DIR / ".portable_migration_checked"
-    if marker.exists():
-        return
-    legacy = install_root() / "database"
-    copied=[]
-    for name in ("network_automation.db", ".credential.key", "known_hosts"):
-        src = legacy / name
-        dst = DATABASE_DIR / name
-        if src.exists() and not dst.exists():
-            shutil.copy2(src, dst)
-            copied.append(name)
-    # A failed copy raises before this point, deliberately leaving the marker absent
-    # so the next launch can resume the idempotent migration.
-    tmp=marker.with_name(marker.name+".tmp")
-    tmp.write_text(json.dumps({"checked": True, "copied": copied})+"\n", encoding="utf-8")
-    os.replace(tmp, marker)
+    marker = DATA_DIR / '.portable_migration_checked'
+    roots: list[Path] = [install_root()]
+    base = os.environ.get('LOCALAPPDATA') or os.environ.get('APPDATA')
+    if base:
+        roots.append(Path(base) / APP_NAME)
+
+    mappings = (
+        ('database/network_automation.db', DATABASE_DIR / 'network_automation.db'),
+        ('database/.credential.key', DATABASE_DIR / '.credential.key'),
+        ('database/known_hosts', DATABASE_DIR / 'known_hosts'),
+    )
+    copied: list[str] = []
+    failures: list[Exception] = []
+    for legacy_root in roots:
+        try:
+            if legacy_root.resolve() == DATA_DIR.resolve():
+                continue
+        except Exception:
+            pass
+        for rel, dst in mappings:
+            src = legacy_root / rel
+            try:
+                if src.is_file() and not dst.exists():
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                    copied.append(rel)
+            except Exception as exc:
+                logging.getLogger(__name__).error('Portable migration failed for %s: %s', rel, exc)
+                failures.append(exc)
+
+    if failures:
+        # Do not write the completion marker when a legacy source existed but
+        # could not be copied; the launcher can show the failure and retry next start.
+        raise failures[0]
+
+    try:
+        payload = {'checked': True, 'copied': copied}
+        tmp = marker.with_name(marker.name + '.tmp')
+        tmp.write_text(json.dumps(payload, ensure_ascii=False) + '\n', encoding='utf-8')
+        os.replace(tmp, marker)
+    except Exception as exc:
+        logging.getLogger(__name__).warning('Cannot write portable migration marker: %s', exc)
 
 
 def hidden_subprocess_kwargs() -> dict:

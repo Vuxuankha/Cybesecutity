@@ -23,7 +23,6 @@ import threading
 import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from webapi.model37 import StrictBaseModel
 from webapi.runtime37 import VERSION, connection, utcnow
@@ -499,15 +498,18 @@ def runtime(request:Request):
     return runtime_report()
 
 
-@router.get('/diagnostics/export')
+@router.post('/diagnostics/export')
 def diagnostics_export(request:Request):
-    security37.require_role(request,'Admin')
+    user=security37.require_role(request,'Admin')
     report=runtime_report()
     # Deliberately remove job error strings and run state, which may include IPs.
     report.pop('recent_jobs',None);report.pop('ping',None)
     report['privacy']='No IP, account, credential, terminal payload, file path or job output included.'
-    return Response(json.dumps(report,ensure_ascii=False,indent=2),media_type='application/json',
-                    headers={'Content-Disposition':'attachment; filename="NetworkAutomation-5.0-diagnostics.json"'})
+    from app_runtime import REPORT_DIR
+    from webapi.reports37 import register
+    path=Path(REPORT_DIR)/('diagnostics_runtime_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json')
+    path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    return register(path,user['id'],'report')
 
 
 @router.get('/session')

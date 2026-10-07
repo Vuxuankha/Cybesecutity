@@ -10,13 +10,14 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 
-def test_password_policy_rejects_short_common_and_accepts_strong():
+def test_password_policy_accepts_any_nonempty_value_with_size_cap():
     from modules import accounts
+    accounts.validate_password('a')
+    accounts.validate_password('Password123!')
     with pytest.raises(ValueError):
-        accounts.validate_password('a')
+        accounts.validate_password('')
     with pytest.raises(ValueError):
-        accounts.validate_password('Password123!')
-    accounts.validate_password('Tr0ub4dor!River#2026')
+        accounts.validate_password('x' * 513)
 
 
 def test_public_user_normalizes_enabled_to_boolean():
@@ -35,12 +36,13 @@ def test_login_model_rejects_unknown_fields_and_oversized_password():
         LoginIn(username='Admin', password='x' * 513)
 
 
-def test_password_request_models_enforce_new_policy_size():
+def test_password_request_models_allow_short_nonempty_and_enforce_size_cap():
     from webapi.routes37 import PasswordIn
+    PasswordIn(old_password='old', new_password='a', confirmation='a')
     with pytest.raises(ValidationError):
-        PasswordIn(old_password='old', new_password='short', confirmation='short')
+        PasswordIn(old_password='old', new_password='', confirmation='')
     with pytest.raises(ValidationError):
-        PasswordIn(old_password='x' * 513, new_password='LongEnough#2026', confirmation='LongEnough#2026')
+        PasswordIn(old_password='x' * 513, new_password='a', confirmation='a')
 
 
 def test_server_and_credential_models_have_bounded_fields():
@@ -95,12 +97,14 @@ def test_soc_asset_ip_validation():
     assert exc.value.status_code == 400
 
 
-def test_kali_invalid_port_config_falls_back_safely():
-    from webapi.kali63 import _safe_port, _public_config
-    assert _safe_port('garbage') == 22
-    assert _safe_port(0) == 22
-    assert _safe_port(70000) == 22
-    assert _public_config({'enabled': True, 'port': 'oops'})['port'] == 22
+def test_windows_tool_input_and_profile_catalog_are_bounded():
+    from webapi.windows_tools79 import WindowsToolRunIn, _profile_catalog
+    from pydantic import ValidationError
+    WindowsToolRunIn(mode='white', profile='ping', target='127.0.0.1', port=443, count=1)
+    with pytest.raises(ValidationError):
+        WindowsToolRunIn(mode='red', profile='red_light_load', target='http://127.0.0.1/', count=6)
+    c=_profile_catalog()
+    assert c['arbitrary_shell'] is False and c['limits']['red_light_load_requests_max']==5
 
 
 def test_network_probe_is_backend_blocked_for_viewer(monkeypatch):
@@ -129,13 +133,14 @@ def test_tls_check_uses_real_server_monitor_table_and_report_uses_real_ioc_table
     assert 'threat_iocs54' not in c56
 
 
-def test_kali_tools_is_write_capable_role_only_and_curl_tls_verification_is_on():
+def test_windows_tools_run_is_write_capable_role_only_and_tls_uses_default_validation_for_http():
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1] / 'webapi/kali63.py').read_text(encoding='utf-8')
-    tools = src.split("@router.get('/tools')", 1)[1].split('@router.', 1)[0]
-    assert "require_role(request,'Admin','Operator')" in tools
-    assert "'Viewer'" not in tools
-    assert 'curl -k' not in src
+    src = (Path(__file__).resolve().parents[1] / 'webapi/windows_tools79.py').read_text(encoding='utf-8')
+    run = src.split("@router.post('/run')", 1)[1]
+    assert "require_role(request, 'Admin', 'Analyst', 'Operator')" in run
+    assert "'Viewer'" not in run.split('require_role',1)[1].split('mode =',1)[0]
+    assert 'curl.exe' in src and '--resolve' in src and '-SkipCertificateCheck' not in src and ' -k' not in src
+    assert 'PolicyErrors' in src
 
 
 def test_security_settings_are_persisted_and_consulted():
@@ -148,13 +153,16 @@ def test_security_settings_are_persisted_and_consulted():
     assert '_remote_https_required' in sec
 
 
-def test_mfa_has_per_challenge_attempt_limit_and_attribution():
+def test_mfa_is_removed_from_active_auth_and_ui_surface():
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1] / 'webapi/security37.py').read_text(encoding='utf-8')
-    assert 'attempts INTEGER NOT NULL DEFAULT 0' in src
-    assert 'MFA_ATTEMPT_LIMIT_REACHED' in src
-    assert "request.state.audit_actor" in src
-    assert 'attempts>=5' in src.replace(' ', '')
+    root=Path(__file__).resolve().parents[1]
+    sec=(root/'webapi/security37.py').read_text(encoding='utf-8')
+    main=(root/'webapi/main.py').read_text(encoding='utf-8')
+    js=(root/'webapi/static/app.js').read_text(encoding='utf-8')
+    assert "PUBLIC = {'/api/health', '/api/auth/login'}" in sec
+    assert "@app.post('/api/auth/mfa/verify')" not in main
+    assert "mfa-login-form" not in js
+    assert "UPDATE web_security_policy51 SET mfa_required=0" in sec
 
 
 def test_missing_resource_delete_paths_return_404_contracts():

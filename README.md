@@ -30,7 +30,7 @@ Lần chạy đầu hoặc sau khi nâng cấp vẫn có thể lâu hơn vì app
 - `desktop_launcher.py`: khởi động ứng dụng và cửa sổ Desktop.
 - FastAPI/Uvicorn: engine nội bộ chỉ bind `127.0.0.1` để phục vụ giao diện ứng dụng.
 - HTML/CSS/JS: giao diện nội bộ hiển thị trong WebView2; không phải dịch vụ public.
-- SQLite/runtime: lưu tại `%LOCALAPPDATA%\NetworkAutomation`.
+- SQLite/runtime: lưu tại `runtime_data` cạnh ứng dụng để có thể chép nguyên thư mục sang máy Windows khác và giữ tài khoản/cấu hình.
 - Không có public registration; Admin đầu tiên được tạo ở lần chạy đầu.
 
 ## Build Windows
@@ -45,7 +45,7 @@ Người dùng cuối chỉ cần cài bộ cài. Python và các dependency đ�
 
 ## Dữ liệu
 
-Dữ liệu vận hành không nằm trong thư mục cài đặt và không được đóng vào source release. Upgrade/uninstall không được dùng để xóa dữ liệu người dùng ngoài quy trình xác nhận riêng.
+Dữ liệu vận hành nằm trong thư mục `runtime_data` cạnh ứng dụng. Khi đổi máy, hãy chép **toàn bộ thư mục ứng dụng**, bao gồm `runtime_data`, để giữ tài khoản Admin, cấu hình, `known_hosts` và khóa mã hóa. Gói phát hành sạch không chứa dữ liệu người dùng có sẵn.
 
 
 ## Khởi động không hiện CMD/PowerShell
@@ -65,3 +65,59 @@ Dữ liệu vận hành không nằm trong thư mục cài đặt và không đ�
 - `.venv` cũ cạnh source không còn được dùng hoặc xóa. Nếu môi trường theo phiên bản bị lỗi/đang bị khóa, launcher giữ nguyên nó và tạo một repair environment mới.
 - Không chạy trực tiếp các file `.bat` trong `_internal\launcher`; chúng chỉ là bootstrap nội bộ được VBS gọi ở chế độ ẩn.
 
+
+### Export CSV / Excel
+Trong ứng dụng Desktop, các bảng hỗ trợ cả **Xuất CSV...** và **Xuất Excel...**. Khi xuất, Windows sẽ mở hộp chọn thư mục đích; file được ghi trực tiếp vào thư mục đã chọn và không tự ghi đè file cùng tên.
+
+## Windows Local Tools - không cần Kali Linux
+
+Từ QA79, khu vực Hacker Mũ Trắng và Hacker Mũ Đỏ không còn phụ thuộc Kali Linux/SSH/VM. Ứng dụng dùng **PowerShell/CMD và các công cụ Windows có sẵn** thông qua backend whitelist.
+
+- **Mũ trắng:** ping, DNS, TCP port, route, ARP, TCP connections, HTTP/HTTPS headers, TLS/certificate, SHA-256 file, process, service, Firewall, Event Log, adapter/IP, traceroute và server/network status.
+- **Mũ đỏ:** chỉ dành cho kiểm thử được phép: private-host reconnaissance/config/connectivity, HTTP headers, TLS, cookie/session audit, local network state và tải nhẹ tối đa 5 HEAD request tuần tự.
+- Giao diện không có ô chạy command tùy ý. Backend chỉ chạy profile định nghĩa sẵn, ẩn console, có timeout/output cap và tự cleanup process khi đóng app.
+- Các tác vụ mạng chủ động bị giới hạn vào private/loopback/link-local target; không có exploit, brute-force, persistence, reverse shell, sniffing hay flood/DDoS.
+
+
+## QA81 - sửa lỗi chọn thư mục xuất CSV/Excel
+- Nút **Xuất CSV...** và **Xuất Excel...** không còn phụ thuộc trực tiếp vào `window.pywebview.api`.
+- Backend Desktop mở hộp chọn thư mục Windows qua API local; nếu native picker lỗi sẽ dùng PowerShell/WinForms chạy ẩn làm fallback.
+- Bấm Hủy không tạo file và không hiện lỗi đỏ.
+- Asset revision: `70400`.
+
+## QA82 - đo mạng chính xác hơn
+- Không còn dùng ping cố định tới `1.1.1.1` để quyết định `POOR/FAIR/GOOD`; số này chỉ còn là tham chiếu.
+- Internet latency được đo bằng nhiều TCP handshake tới cùng máy chủ CDN dùng cho Speed Test và lấy median để giảm outlier.
+- Download/upload dùng warm-up, nhiều luồng và dung lượng thích ứng (tối đa khoảng 128 MB tải xuống / 64 MB tải lên) để tránh kết quả thấp giả trên đường truyền nhanh.
+- Trang Tốc độ mạng dùng phép đo gần nhất (line hoặc speed test) cho các card Latency/Jitter/Grade.
+- Kết quả vẫn có thể khác Ookla/Fast.com vì máy chủ và thuật toán khác nhau; app hiển thị rõ máy chủ/phương pháp đo.
+- Asset revision: `70400`.
+
+
+## QA83 - sửa Speed Test không hiện Download/Upload
+- Sửa timeout frontend 20 giây làm Speed Test bị hủy trước khi hoàn tất.
+- API helper hỗ trợ timeout riêng cho tác vụ dài; Speed Test có thể chờ tối đa 180 giây, kiểm tra đường truyền 45 giây và chẩn đoán chi tiết 60 giây.
+- Khi chưa có phép đo tốc độ mới, card Download/Upload hiển thị **Chưa đo** thay vì dấu `-`.
+- Progress Speed Test thông báo rõ phép đo đa luồng có thể mất 30–120 giây tùy đường truyền.
+- Asset revision: `70404`.
+
+### QA84 language selector
+
+The Desktop UI supports **Tiếng Việt**, **中文（简体）**, and **English**. Use the language selector on the login screen or in the main header. The selection is saved locally and restored on the next launch. Raw technical output (IP/MAC, host names, logs, code, PowerShell/CMD output) is deliberately not translated.
+
+### QA85 language switching runtime fix
+- Fixes the WebView2 MutationObserver feedback loop that could make the language dropdown visible but leave the UI unchanged.
+- Vietnamese / Simplified Chinese / English now switch immediately on the login screen and inside the application.
+- Language selector events are delegated, localStorage failures no longer abort i18n, and login placeholders/capability bullets are translated.
+- Asset revision: `70404`.
+
+## QA86 - Full Trilingual UI
+
+Bản QA86 dùng asset revision `70404` và hoàn thiện giao diện ba ngôn ngữ Tiếng Việt / 中文（简体） / English trên toàn bộ UI, kể cả nội dung động và thông báo WebAPI. Dữ liệu kỹ thuật thô (IP/MAC/hostname/log/code/output PowerShell) được giữ nguyên để tránh làm sai dữ liệu.
+
+
+### QA87 – đo tuyến trong nước và quốc tế riêng biệt
+
+Bản QA87 dùng **tuyến trong nước làm chất lượng chính**. Ứng dụng tự thử nhiều điểm TCP 443 tại Việt Nam và chọn điểm phản hồi nhanh nhất để tính latency/jitter/loss. Tuyến quốc tế/CDN được hiển thị riêng và không kéo điểm trong nước xuống `POOR`. Nút **Kiểm tra trong nước** là phép đo mặc định; **Kiểm tra quốc tế** là phép đo tham khảo. Download/Upload vẫn là bài đo băng thông CDN riêng. Có thể thay danh sách điểm trong nước bằng biến môi trường `NA_DOMESTIC_PROBE_HOSTS`.
+
+Asset revision: `70405`.

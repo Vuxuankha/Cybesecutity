@@ -1,14 +1,16 @@
 'use strict';
-/* UI 6.9.0 Hotfix6: split defensive White-Hat features and isolated Red-Team Lab simulators.
-   Red-Team pages are intentionally non-networked/non-exploit simulators. They do not send attack
-   payloads, brute-force credentials, sniff interfaces, bypass authorization, or generate traffic floods. */
+/* Security modes: defensive White-Hat features plus an authorized Red-Team diagnostic lab.
+   Red-Team execution is limited to bounded Windows-local/private-target diagnostics; exploit, credential
+   attacks, persistence, packet sniffing and traffic flooding are not exposed. */
 (()=>{
+  if(window.__naSecurityModes61Installed)return;
+  window.__naSecurityModes61Installed=true;
   Object.assign(tr,{
     bluehub61:'Hacker Mũ Trắng · Trung tâm',
     blueweb61:'Web Security Auditor',
     bluelog61:'Log Analysis / Mini SIEM',
     bluepass61:'Password & Breach Audit',
-    redhub61:'Hacker Mũ Đen · Lab cô lập',
+    redhub61:'Hacker Mũ Đỏ · Lab cô lập',
     redinject61:'Injection Simulator',
     redxss61:'XSS / CSRF Simulator',
     redauth61:'Brute-force Defense Simulator',
@@ -18,8 +20,8 @@
   });
   Object.assign(navIcon,{bluehub61:'🛡',blueweb61:'⌁',bluelog61:'≡',bluepass61:'⚿',redhub61:'◈',redinject61:'>_',redxss61:'<>',redauth61:'⚿',redpacket61:'≋',redidor61:'⇄',redload61:'⇈'});
 
-  const white=['bluehub61','scan','ipmac','vuln51','blueweb61','bluelog61','bluepass61','siem51','threat54','endpoint58','secpost51'];
-  const red=['redhub61','redinject61','redxss61','redauth61','redpacket61','redidor61','redload61'];
+  const white=['bluehub61','wintools79','scan','ipmac','vuln51','blueweb61','bluelog61','bluepass61','siem51','threat54','endpoint58','secpost51'];
+  const red=['redlocal79','redhub61','redinject61','redxss61','redauth61','redpacket61','redidor61','redload61'];
   const keepOverview=['dashboard','daily57','soc51','taskcenter47'];
   const keepNetwork=['devices','managed','profiles','organization','topology','lan','netspeed59','pingmonitor','history','monitoringx','health','server','snmp','extensions','remote'];
   const keepOps=['autoip','audit','terminal','backup','compare','dailyaudit','scheduler','restore','readiness','jobs','compliance53','notify56','reports','cases55','security','alerts','rules','incidents','services','sla','inbox47'];
@@ -27,14 +29,14 @@
   groups.splice(0,groups.length,
     ['TỔNG QUAN',keepOverview],
     ['🛡 HACKER MŨ TRẮNG · PHÒNG THỦ',white],
-    ['🥷 HACKER MŨ ĐEN · LAB CÔ LẬP',red],
+    ['🥷 HACKER MŨ ĐỎ · LAB CÔ LẬP',red],
     ['THIẾT BỊ & HẠ TẦNG',keepNetwork],
     ['VẬN HÀNH & PHẢN ỨNG',keepOps],
     ['QUẢN TRỊ',keepAdmin]
   );
   state.groupOpen={0:true,1:true,2:true,3:false,4:false,5:false};
 
-  const safeNotice=()=>`<div class="safe-lab61"><b>LAB AN TOÀN</b><span>Các mô phỏng Red Team chỉ xử lý dữ liệu mẫu ngay trong trình duyệt. Không gửi payload tấn công, không brute-force tài khoản, không bắt gói từ card mạng và không tạo flood/DDoS.</span></div>`;
+  const safeNotice=()=>`<div class="safe-lab61"><b>LAB AN TOÀN</b><span>Các mô phỏng Red Team chủ yếu xử lý dữ liệu mẫu cục bộ. Windows Local Lab chỉ cho chẩn đoán private target đã được phép và tải nhẹ tối đa 5 HEAD request tuần tự; không exploit, không brute-force tài khoản, không bắt gói từ card mạng, không persistence và không tạo flood/DDoS.</span></div>`;
   const featureCard=(icon,title,desc,page,tag='')=>`<button class="mode-card61" data-action="page" data-page="${esc(page)}"><span class="mode-icon61">${icon}</span><span><b>${esc(title)}</b><small>${esc(desc)}</small>${tag?`<em>${esc(tag)}</em>`:''}</span><i>›</i></button>`;
   const localResult=(title,body)=>panel(title,`<div class="mode-result61">${body}</div>`);
 
@@ -51,7 +53,7 @@
   pages.bluepass61=async()=>`<div class="mode-hero61 white"><div><div class="eyebrow">WHITE HAT / PASSWORD AUDIT</div><h2>Password & Breach Audit</h2><p>Độ mạnh được tính hoàn toàn trong trình duyệt. Không lưu và không gửi mật khẩu.</p></div></div>${panel('Đánh giá mật khẩu cục bộ',`<form id="blue-pass61-form"><label>Mật khẩu cần đánh giá<input type="password" name="password" autocomplete="new-password" required></label><div class="toolbar"><button class="primary" type="submit">Đánh giá</button></div></form><div id="blue-pass61-result"></div>`)}${panel('Kiểm tra rò rỉ tài khoản',`<p class="caption">Để kiểm tra email/tài khoản với Have I Been Pwned cần cấu hình API key và phải có sự đồng ý gửi định danh tới dịch vụ bên ngoài. Hotfix này không tự gửi email hoặc mật khẩu ra Internet. Có thể dùng trang HIBP chính thức thủ công hoặc bổ sung connector/API key ở bản sau.</p>`)}`;
   forms['blue-pass61-form']=async f=>{const p=String(vals(f).password||''),r=passwordScore61(p),bits=Math.round(p.length*Math.log2(Math.max(2,new Set(p).size)));const h=$('#blue-pass61-result');if(h)h.innerHTML=localResult('Kết quả',`<div class="cards">${metric('Đánh giá',r.label)}${metric('Độ dài',p.length)}${metric('Entropy ước tính',bits+' bits')}</div><p class="caption">Ưu tiên passphrase dài, duy nhất cho từng dịch vụ và MFA. Ước tính này không phải cam kết thời gian crack thực tế.</p>`);f.reset();};
 
-  pages.redhub61=async()=>`<div class="mode-hero61 red"><div><div class="eyebrow">RED TEAM / ATTACKER SIMULATION</div><h2>Hacker Mũ Đen · Lab cô lập</h2><p>Mô phỏng tư duy tấn công để kiểm thử phòng thủ, nhưng không biến ứng dụng thành công cụ tấn công mục tiêu thật.</p></div><span class="mode-shield61">🥷</span></div>${safeNotice()}<div class="mode-grid61">${featureCard('>_','Injection Attack Simulator','Phân loại input nguy hiểm và kiểm tra cách phòng thủ.','redinject61','SIMULATION ONLY')}${featureCard('<>','XSS & CSRF Simulator','Minh họa encode/sanitize và kiểm tra control CSRF.','redxss61','SIMULATION ONLY')}${featureCard('⚿','Brute-force Defense Simulator','Mô phỏng rate-limit/lockout bằng toán học, không thử login thật.','redauth61','NO CREDENTIAL ATTEMPTS')}${featureCard('≋','Packet Inspector Lab','Phân tích chuỗi packet mẫu/offline, không sniff card mạng.','redpacket61','OFFLINE')}${featureCard('⇄','IDOR / Access Control Lab','Mô phỏng object ownership trên dữ liệu giả.','redidor61','SYNTHETIC DATA')}${featureCard('⇈','Load / DDoS Capacity Lab','Tính tải giả lập, không phát sinh flood/request thật.','redload61','NO NETWORK TRAFFIC')}</div>`;
+  pages.redhub61=async()=>`<div class="mode-hero61 red"><div><div class="eyebrow">RED TEAM / ATTACKER SIMULATION</div><h2>Hacker Mũ Đỏ · Lab cô lập</h2><p>Mô phỏng tư duy tấn công để kiểm thử phòng thủ, nhưng không biến ứng dụng thành công cụ tấn công mục tiêu thật.</p></div><span class="mode-shield61">🥷</span></div>${safeNotice()}<div class="mode-grid61">${featureCard('>_','Injection Attack Simulator','Phân loại input nguy hiểm và kiểm tra cách phòng thủ.','redinject61','SIMULATION ONLY')}${featureCard('<>','XSS & CSRF Simulator','Minh họa encode/sanitize và kiểm tra control CSRF.','redxss61','SIMULATION ONLY')}${featureCard('⚿','Brute-force Defense Simulator','Mô phỏng rate-limit/lockout bằng toán học, không thử login thật.','redauth61','NO CREDENTIAL ATTEMPTS')}${featureCard('≋','Packet Inspector Lab','Phân tích chuỗi packet mẫu/offline, không sniff card mạng.','redpacket61','OFFLINE')}${featureCard('⇄','IDOR / Access Control Lab','Mô phỏng object ownership trên dữ liệu giả.','redidor61','SYNTHETIC DATA')}${featureCard('⇈','Load / DDoS Capacity Lab','Tính tải giả lập, không phát sinh flood/request thật.','redload61','NO NETWORK TRAFFIC')}</div>`;
 
   function injectionSignals61(s){const raw=String(s||''),sig=[];if(/[;'"`]/.test(raw))sig.push('Ký tự cần encode/parameterize');if(/\b(select|union|drop|insert|update|delete)\b/i.test(raw))sig.push('Từ khóa giống SQL');if(/[|&]{1,2}|\$\(|`/.test(raw))sig.push('Ký hiệu giống shell control');if(/\.\.\//.test(raw))sig.push('Path traversal pattern');return sig;}
   pages.redinject61=async()=>`<div class="mode-hero61 red"><div><div class="eyebrow">RED LAB / INJECTION</div><h2>Injection Attack Simulator</h2><p>Nhập chuỗi mẫu để xem bộ lọc phòng thủ nhận diện dấu hiệu nào. Không gửi chuỗi tới URL, database hoặc shell.</p></div></div>${safeNotice()}${panel('Input simulator',`<form id="red-inject61-form"><label>Chuỗi kiểm thử<textarea name="sample" rows="7" placeholder="Nhập dữ liệu mẫu..."></textarea></label><div class="toolbar"><button class="primary" type="submit">Phân tích</button></div></form><div id="red-inject61-result"></div>`)}`;
@@ -72,10 +74,9 @@
   pages.redload61=async()=>`<div class="mode-hero61 red"><div><div class="eyebrow">RED LAB / CAPACITY</div><h2>Load / DDoS Capacity Lab</h2><p>Mô hình hóa tải bằng phép tính, không gửi request thật tới bất kỳ host nào.</p></div></div>${safeNotice()}${panel('Capacity calculator',`<form id="red-load61-form" class="form-grid">${input('Người dùng đồng thời giả lập','users','number',500)}${input('Request / user / phút','rpm','number',12)}${input('P95 latency mục tiêu (ms)','latency','number',300)}<div><button class="primary" type="submit">Tính tải</button></div></form><div id="red-load61-result"></div>`)}`;
   forms['red-load61-form']=async f=>{const v=vals(f),users=Math.max(1,Number(v.users||1)),rpm=Math.max(0,Number(v.rpm||0)),rps=users*rpm/60,conc=rps*Math.max(0,Number(v.latency||0))/1000,h=$('#red-load61-result');if(h)h.innerHTML=localResult('Kết quả mô hình',`<div class="cards">${metric('RPS lý thuyết',rps.toFixed(1))}${metric('Concurrency ước tính',conc.toFixed(1))}${metric('Traffic phát sinh','0 request')}</div><p class="caption">Dùng staging/load-test platform được cấp phép nếu cần kiểm thử tải thực tế. Trang này chỉ giúp sizing trước khi chạy test thật.</p>`);};
 
-  const titleMap={bluehub61:['Hacker Mũ Trắng','Phòng thủ & kiểm tra có kiểm soát'],blueweb61:['Web Security Auditor','Phân tích header và cấu hình phòng thủ'],bluelog61:['Log Analysis / Mini SIEM','Phân tích log cục bộ'],bluepass61:['Password & Breach Audit','Đánh giá credential an toàn'],redhub61:['Hacker Mũ Đen · Lab','Mô phỏng tấn công trong lab cô lập'],redinject61:['Injection Simulator','Mô phỏng injection không gửi payload'],redxss61:['XSS / CSRF Simulator','Mô phỏng client-side attack và phòng thủ'],redauth61:['Brute-force Defense Simulator','Mô hình hóa chống dò mật khẩu'],redpacket61:['Packet Inspector Lab','Phân tích dữ liệu packet offline'],redidor61:['IDOR / Access Control Lab','Mô phỏng lỗi phân quyền'],redload61:['Load / DDoS Capacity Lab','Mô hình tải không phát sinh traffic']};
-  const oldGo=window.go;
-  window.go=async function(page){const r=await oldGo(page);const m=titleMap[page];if(m){const t=$('#title'),s=$('#subtitle'),b=$('#breadcrumb');if(t)t.textContent=m[0];if(s)s.textContent=m[1];if(b)b.textContent=red.includes(page)?'🥷 HACKER MŨ ĐEN · LAB CÔ LẬP':'🛡 HACKER MŨ TRẮNG · PHÒNG THỦ';}return r;};
+  const titleMap={bluehub61:['Hacker Mũ Trắng','Phòng thủ & kiểm tra có kiểm soát'],blueweb61:['Web Security Auditor','Phân tích header và cấu hình phòng thủ'],bluelog61:['Log Analysis / Mini SIEM','Phân tích log cục bộ'],bluepass61:['Password & Breach Audit','Đánh giá credential an toàn'],redhub61:['Hacker Mũ Đỏ · Lab','Mô phỏng tấn công trong lab cô lập'],redinject61:['Injection Simulator','Mô phỏng injection không gửi payload'],redxss61:['XSS / CSRF Simulator','Mô phỏng client-side attack và phòng thủ'],redauth61:['Brute-force Defense Simulator','Mô hình hóa chống dò mật khẩu'],redpacket61:['Packet Inspector Lab','Phân tích dữ liệu packet offline'],redidor61:['IDOR / Access Control Lab','Mô phỏng lỗi phân quyền'],redload61:['Load / DDoS Capacity Lab','Mô hình tải không phát sinh traffic']};
+  document.addEventListener('na:page-rendered',e=>{const page=e.detail?.page,m=titleMap[page];if(m){const t=$('#title'),s=$('#subtitle'),b=$('#breadcrumb');if(t)t.textContent=m[0];if(s)s.textContent=m[1];if(b)b.textContent=red.includes(page)?'🥷 HACKER MŨ ĐỎ · LAB CÔ LẬP':'🛡 HACKER MŨ TRẮNG · PHÒNG THỦ';}});
 
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>navigation(),{once:true});else navigation();
-  window.naSecurityModes61={version:NA_UI_VERSION,legacy_overlay:'hotfix6',white,red,red_team_mode:'simulation-only'};
+  window.naSecurityModes61={version:NA_UI_VERSION,legacy_overlay:'hotfix6',white,red,red_team_mode:'authorized-bounded-diagnostics'};
 })();

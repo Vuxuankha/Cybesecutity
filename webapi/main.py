@@ -88,8 +88,11 @@ def _prepare_schema_fast() -> str:
         try:
             # One tiny DB sanity query plus auth/session tables.  No full migration,
             # backup, NMS schema replay, PowerShell discovery or worker startup here.
-            with sqlite3.connect(Path(DB_PATH), timeout=0.5) as c:
+            c = sqlite3.connect(Path(DB_PATH), timeout=0.5)
+            try:
                 c.execute('SELECT 1 FROM sqlite_master LIMIT 1').fetchone()
+            finally:
+                c.close()
             security37.ensure_tables()
             # Repair older 7.0.3 databases whose migration marker predates the
             # durable jobs table. This is a tiny CREATE TABLE IF NOT EXISTS.
@@ -255,9 +258,16 @@ app.include_router(desktop70.router)
 manager=DeviceManager()
 
 
-class MfaVerify51In(StrictBaseModel):
-    challenge: str = Field(min_length=16, max_length=256)
-    code: str = Field(min_length=6, max_length=6, pattern=r'^\d{6}$')
+
+class CsvExport37In(StrictBaseModel):
+    filename: str = Field(default='NetworkAutomation.csv', min_length=1, max_length=200)
+    content: str = Field(max_length=8 * 1024 * 1024)
+    destination_token: str | None = Field(default=None, max_length=128)
+
+
+class ReportExport37In(StrictBaseModel):
+    destination_token: str | None = Field(default=None, max_length=128)
+
 
 class ServerTargetIn(StrictBaseModel):
     name: str = Field(default='', max_length=120)
@@ -1053,9 +1063,31 @@ def api_report_summary():
                 'status_source':'freshness-aware merged observations'}
 
 @app.post('/api/reports/export')
-def api_export_report(request:Request):
+def api_export_report(x:ReportExport37In, request:Request):
     from webapi.reports37 import export_report
-    return export_report(_require_role(request,'Admin','Operator')['id'])
+    user=_require_role(request,'Admin','Operator')
+    try:
+        return export_report(user['id'],x.destination_token)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+
+@app.post('/api/reports/csv')
+def api_export_csv(x:CsvExport37In, request:Request):
+    from webapi.reports37 import save_csv
+    user=_require_role(request,'Admin','Analyst','Operator')
+    try:
+        return save_csv(user['id'],x.filename,x.content,x.destination_token)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+
+@app.post('/api/reports/xlsx')
+def api_export_xlsx(x:CsvExport37In, request:Request):
+    from webapi.reports37 import save_xlsx_from_csv
+    user=_require_role(request,'Admin','Analyst','Operator')
+    try:
+        return save_xlsx_from_csv(user['id'],x.filename,x.content,x.destination_token)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
 
 @app.get('/api/managed-devices')
 def api_managed_devices():
@@ -1133,9 +1165,6 @@ def desktop_login(x:LoginIn,request:Request,response:Response):
     return security37.login(x.username,x.password,request,response)
 
 
-@app.post('/api/auth/mfa/verify')
-def desktop_mfa_verify(x:MfaVerify51In,request:Request,response:Response):
-    return security37.verify_mfa_login(x.challenge,x.code,request,response)
 
 @app.post('/api/auth/logout')
 def desktop_logout(request:Request,response:Response):
@@ -1765,8 +1794,8 @@ from webapi.cybersecurity59 import router as cybersecurity59_router
 app.include_router(cybersecurity59_router)
 from webapi.automation68 import router as automation68_router
 app.include_router(automation68_router)
-from webapi.kali63 import router as kali63_router
-app.include_router(kali63_router)
+from webapi.windows_tools79 import router as windows_tools79_router
+app.include_router(windows_tools79_router)
 
 # Do not echo secret input values in Pydantic validation failures.
 from fastapi.exceptions import RequestValidationError

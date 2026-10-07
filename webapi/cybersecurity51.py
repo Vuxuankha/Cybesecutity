@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from webapi.model37 import StrictBaseModel
 
 from webapi.runtime37 import connection, utcnow
-from webapi.security37 import require_role, reset_mfa
+from webapi.security37 import require_role
 from webapi import security37
 from app_runtime import hidden_subprocess_kwargs
 
@@ -98,7 +98,7 @@ class VaultCreateIn(StrictBaseModel):
 
 
 class VaultRevealIn(StrictBaseModel):
-    code: str = Field(min_length=6, max_length=6, pattern=r'^\d{6}$')
+    pass
 
 
 class SecuritySettingsIn(StrictBaseModel):
@@ -388,17 +388,6 @@ def alert_reopen(alert_id:int, request:Request):
     return {'ok':True,'id':alert_id,'status':'OPEN','actor':user['username']}
 
 
-def _vault_mfa_ok(user:dict, code:str):
-    from modules.nms_v5 import decrypt_secret
-    security37.ensure_tables()
-    with connection() as c:
-        row=c.execute('SELECT COALESCE(mfa_enabled,0) mfa_enabled,mfa_secret_enc FROM app_users WHERE id=?',(user['id'],)).fetchone()
-    if not row or not row['mfa_enabled'] or not row['mfa_secret_enc']:
-        raise HTTPException(403,'MFA_STEP_UP_REQUIRED')
-    try: secret=decrypt_secret(row['mfa_secret_enc'])
-    except Exception as exc: raise HTTPException(500,'MFA_SECRET_UNAVAILABLE') from exc
-    if not security37._verify_totp(secret,code): raise HTTPException(401,'INVALID_MFA_CODE')
-
 
 @router.get('/vault')
 def vault_list(request:Request):
@@ -419,13 +408,13 @@ def vault_create(body:VaultCreateIn, request:Request):
 
 @router.post('/vault/{vault_id}/reveal')
 def vault_reveal(vault_id:int, body:VaultRevealIn, request:Request):
-    user=require_role(request,'Admin'); ensure_tables(); _vault_mfa_ok(user,body.code)
+    user=require_role(request,'Admin'); ensure_tables()
     from modules.nms_v5 import decrypt_secret
     with connection() as c:
         row=c.execute('SELECT id,name,username,secret_enc FROM secret_vault52 WHERE id=?',(vault_id,)).fetchone()
         if not row: raise HTTPException(404,'VAULT_ENTRY_NOT_FOUND')
         c.execute('UPDATE secret_vault52 SET last_accessed_at=? WHERE id=?',(utcnow(),vault_id)); c.commit()
-    return {'id':vault_id,'name':row['name'],'username':row['username'],'secret':decrypt_secret(row['secret_enc']),'step_up_mfa':True}
+    return {'id':vault_id,'name':row['name'],'username':row['username'],'secret':decrypt_secret(row['secret_enc']),'admin_verified':True}
 
 
 @router.delete('/vault/{vault_id}')
@@ -690,29 +679,6 @@ def audit(request:Request, limit:int=1000):
     return {'web_security':web,'siem_count':len(_rows('SELECT id FROM siem_events51 LIMIT 5000')),'alerts_open':len(_rows("SELECT id FROM security_alerts51 WHERE status='OPEN' LIMIT 5000"))}
 
 
-@router.get('/auth/mfa/status')
-def mfa_status(request:Request):
-    user=require_role(request); security37.ensure_tables()
-    with connection() as c:
-        row=c.execute('SELECT COALESCE(mfa_enabled,0) mfa_enabled,mfa_updated_at FROM app_users WHERE id=?',(user['id'],)).fetchone()
-        policy=c.execute('SELECT mfa_required FROM web_security_policy51 WHERE id=1').fetchone()
-    return {'enabled':bool(row['mfa_enabled']) if row else False,'updated_at':row['mfa_updated_at'] if row else None,'required':bool(policy['mfa_required']) if policy else True}
-
-
-@router.get('/users/security')
-def users_security(request:Request):
-    require_role(request,'Admin'); security37.ensure_tables()
-    return _rows('SELECT id,username,role,enabled,COALESCE(mfa_enabled,0) mfa_enabled,mfa_updated_at FROM app_users ORDER BY username COLLATE NOCASE')
-
-
-@router.post('/auth/mfa/reset/{user_id}')
-def admin_reset_mfa(user_id:int, request:Request):
-    actor=require_role(request,'Admin')
-    if not security37.reset_mfa(user_id):
-        raise HTTPException(404,'User not found')
-    return {'ok':True,'user_id':user_id,'note':'MFA reset. The user must enroll again at next login. Existing application sessions were revoked.','actor':actor['username']}
-
-
 @router.get('/settings')
 def get_security_settings(request:Request):
     require_role(request,'Admin'); ensure_tables()
@@ -738,19 +704,17 @@ def security_posture(request:Request):
     vt_key=bool(os.environ.get('NA_VT_API_KEY','')); nvd_key=bool(os.environ.get('NA_NVD_API_KEY',''))
     with connection() as c:
         users=c.execute('SELECT COUNT(*) FROM app_users WHERE enabled=1').fetchone()[0]
-        mfa=c.execute('SELECT COUNT(*) FROM app_users WHERE enabled=1 AND COALESCE(mfa_enabled,0)=1').fetchone()[0]
         argon=c.execute("SELECT COUNT(*) FROM app_users WHERE enabled=1 AND password_hash LIKE '$argon2%'").fetchone()[0]
         settings=_security_settings(c)
     checks=[
-        {'control':'MFA','status':'PASS' if users and mfa==users else 'WARN','evidence':f'{mfa}/{users} active accounts enrolled'},
         {'control':'Argon2id password hashing','status':'PASS' if users and argon==users else 'WARN','evidence':f'{argon}/{users} active accounts migrated; remaining accounts migrate on successful login/password change'},
         {'control':'Secure cookies / HTTPS mode','status':'PASS' if secure_transport else 'WARN','evidence':('loopback HTTP exception; remote HTTPS required' if loopback and scheme!='https' else f'request scheme={scheme}; remote_https_required={int(settings["remote_https_required"])}')},
         {'control':'API request signing secret','status':'PASS' if api_secret else 'WARN','evidence':'NA_API_SECRET '+('configured' if api_secret else 'not configured for optional v1 token API')},
         {'control':'VirusTotal integration','status':'PASS' if settings['vt_enabled'] and vt_key else ('DISABLED' if not settings['vt_enabled'] else 'WARN'),'evidence':('enabled' if settings['vt_enabled'] else 'disabled')+'; API key '+('configured' if vt_key else 'missing')},
         {'control':'NVD integration','status':'PASS' if settings['nvd_enabled'] else 'DISABLED','evidence':('enabled' if settings['nvd_enabled'] else 'disabled')+'; API key '+('configured' if nvd_key else 'optional/not configured')},
-        {'control':'Encrypted Secret Vault','status':'PASS','evidence':'Secrets use the existing credential encryption key; reveal requires Admin + current TOTP'},
+        {'control':'Encrypted Secret Vault','status':'PASS','evidence':'Secrets use the existing credential encryption key; reveal requires an authenticated Admin session'},
         {'control':'SOC alert workflow','status':'PASS','evidence':'Open / acknowledged / resolved lifecycle with owner and resolution note'}]
-    return {'checks':checks,'principles':['deny-by-default writes','CSRF protection','same-origin enforcement','request size limits','API rate limiting','MFA step-up for secret reveal','no secret values in audit logs']}
+    return {'checks':checks,'principles':['deny-by-default writes','CSRF protection','same-origin enforcement','request size limits','API rate limiting','Admin-only secret reveal','no secret values in audit logs']}
 
 
 # ---- Cybersecurity 5.3: compliance + defensive response orchestration ----

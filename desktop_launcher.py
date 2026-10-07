@@ -22,11 +22,13 @@ import threading
 import time
 import urllib.request
 import json
+import logging
 import secrets
 import atexit
 from pathlib import Path
 
 APP_TITLE = "NetworkAutomation Desktop 7.0.3"
+logger = logging.getLogger(__name__)
 
 WEBVIEW2_CLIENT_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 
@@ -85,45 +87,62 @@ def _install_process_cleanup_job() -> bool:
 
         handle = kernel32.CreateJobObjectW(None, None)
         if not handle:
+            logger.warning('CreateJobObjectW failed; fallback process cleanup will be used')
             return False
         info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
         info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         if not kernel32.SetInformationJobObject(handle, JobObjectExtendedLimitInformation,
                                                 ctypes.byref(info), ctypes.sizeof(info)):
             kernel32.CloseHandle(handle)
+            logger.warning('SetInformationJobObject failed; fallback process cleanup will be used')
             return False
         if not kernel32.AssignProcessToJobObject(handle, kernel32.GetCurrentProcess()):
             # Some managed/enterprise launchers may already impose a non-nestable
             # job. Keep the safe psutil fallback below instead of killing globally.
             kernel32.CloseHandle(handle)
+            logger.warning('AssignProcessToJobObject failed; fallback process cleanup will be used')
             return False
         _PROCESS_JOB_HANDLE = handle
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning('Windows Job Object cleanup unavailable: %s', exc)
         return False
 
 
 def _terminate_child_processes() -> None:
-    """Best-effort fallback cleanup for descendants owned by this app only."""
+    """Best-effort cleanup for this app's descendants and detached helpers only."""
     if os.name != 'nt':
         return
     try:
         import psutil
+        token = os.environ.get('NA_INSTANCE_TOKEN', '')
         parent = psutil.Process(os.getpid())
-        children = parent.children(recursive=True)
+        owned = {p.pid: p for p in parent.children(recursive=True)}
+        # If a helper detached/re-parented after spawn, identify it by the
+        # per-launch environment token inherited from this desktop process.
+        if token:
+            for proc in psutil.process_iter(['pid']):
+                if proc.pid in owned or proc.pid == os.getpid():
+                    continue
+                try:
+                    if proc.environ().get('NA_INSTANCE_TOKEN') == token:
+                        owned[proc.pid] = proc
+                except (psutil.NoSuchProcess, psutil.AccessDenied, NotImplementedError):
+                    continue
+        children = list(owned.values())
         for child in children:
             try:
                 child.terminate()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                logger.debug('Cannot terminate child pid=%s: %s', getattr(child, 'pid', '?'), exc)
         _gone, alive = psutil.wait_procs(children, timeout=2.5)
         for child in alive:
             try:
                 child.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-    except Exception:
-        pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                logger.warning('Cannot kill remaining app child pid=%s: %s', getattr(child, 'pid', '?'), exc)
+    except Exception as exc:
+        logger.warning('Fallback process cleanup failed: %s', exc)
 
 
 def _webview2_runtime_version() -> str:
@@ -171,10 +190,9 @@ def _resource_root() -> Path:
 
 
 def _configure_environment() -> None:
-    # Source runs keep runtime data outside tracked source. Frozen builds let
-    # app_runtime choose %LOCALAPPDATA%\NetworkAutomation automatically.
-    if not _is_frozen():
-        os.environ.setdefault("NETWORK_AUTOMATION_DATA_DIR", str(_resource_root() / "runtime_data"))
+    # Keep account/config state beside the portable app in every mode so the
+    # whole folder can be copied to another PC without recreating Admin.
+    os.environ.setdefault("NETWORK_AUTOMATION_DATA_DIR", str(Path(sys.executable).resolve().parent / "runtime_data" if _is_frozen() else _resource_root() / "runtime_data"))
     os.environ["NA_DESKTOP_APP"] = "1"
     # Unique per process so a stale/unrelated localhost service can never satisfy health.
     os.environ["NA_INSTANCE_TOKEN"] = "desktop-" + secrets.token_hex(12)
@@ -224,7 +242,8 @@ def _fast_existing_user() -> bool:
         if not db_path.is_file() or db_path.stat().st_size <= 0:
             return False
         uri = db_path.resolve().as_uri() + "?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=0.5) as conn:
+        conn = sqlite3.connect(uri, uri=True, timeout=0.5)
+        try:
             table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_users'"
             ).fetchone()
@@ -233,6 +252,8 @@ def _fast_existing_user() -> bool:
             # A usable installation must have an enabled Admin. Enabled viewers or
             # disabled historical accounts cannot repair account access themselves.
             return conn.execute("SELECT 1 FROM app_users WHERE role='Admin' AND enabled=1 LIMIT 1").fetchone() is not None
+        finally:
+            conn.close()
     except Exception:
         return False
 
@@ -270,7 +291,7 @@ def _first_run_admin() -> bool:
     frame = ttk.Frame(root, padding=22)
     frame.grid(row=0, column=0, sticky="nsew")
     heading = "Tạo tài khoản quản trị đầu tiên" if count == 0 else "Khôi phục quyền quản trị cục bộ"
-    detail = "Tài khoản này chỉ được lưu trong dữ liệu cục bộ của máy." if count == 0 else "Không còn Admin đang hoạt động. Có thể kích hoạt lại Admin cũ hoặc tạo Admin mới; dữ liệu khác được giữ nguyên."
+    detail = "Tài khoản được lưu trong thư mục runtime_data cạnh ứng dụng; hãy chép cả thư mục này khi đổi máy." if count == 0 else "Không còn Admin đang hoạt động. Có thể kích hoạt lại Admin cũ hoặc tạo Admin mới; dữ liệu khác được giữ nguyên."
     ttk.Label(frame, text=heading, font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
     ttk.Label(frame, text=detail, wraplength=470).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 14))
 
@@ -322,6 +343,19 @@ def _first_run_admin() -> bool:
     entries[1].focus_set()
     root.mainloop()
     return bool(result["ok"])
+
+
+def _ensure_local_security_files() -> None:
+    """Prepare local trust/encryption files without overwriting recoverable data."""
+    from app_runtime import DATABASE_DIR
+    known=Path(DATABASE_DIR)/'known_hosts'
+    known.parent.mkdir(parents=True,exist_ok=True)
+    known.touch(exist_ok=True)
+    # _fernet creates a key only when the database contains no encrypted data.
+    # If a moved installation lost its matching key, it deliberately raises so
+    # the old secrets are not silently made unrecoverable.
+    from modules.nms_v5 import _fernet
+    _fernet(allow_create=True)
 
 
 def _reserve_port() -> tuple[int, socket.socket]:
@@ -397,11 +431,23 @@ def _startup_error_html(message: str) -> str:
     </style></head><body><div class='box'><h2>Không thể khởi động backend local</h2><pre>{safe}</pre><p>Đóng cửa sổ này và xem log để kiểm tra chi tiết.</p></div></body></html>"""
 
 
+class _DesktopJsApi:
+    """Native-only capabilities exposed to the trusted local WebView UI."""
+
+    def __init__(self) -> None:
+        self.window = None
+
+    def choose_export_directory(self):
+        from desktop_export import choose_export_directory
+        return choose_export_directory()
+
+
 def _run_desktop_window(port: int, url: str, reserved_socket: socket.socket) -> None:
     """Paint a window immediately, then start/navigate to the local backend."""
     import webview
 
     state: dict[str, object] = {"server": None, "thread": None, "error": None}
+    js_api = _DesktopJsApi()
     window = webview.create_window(
         APP_TITLE,
         html=_startup_splash_html(),
@@ -409,7 +455,20 @@ def _run_desktop_window(port: int, url: str, reserved_socket: socket.socket) -> 
         height=920,
         min_size=(1024, 700),
         text_select=True,
+        js_api=js_api,
     )
+    js_api.window = window
+
+    # Export must not depend on JavaScript bridge readiness.  Register the
+    # window picker with the local backend so HTTP export actions can invoke it.
+    from desktop_export import set_native_export_picker
+    def _pick_export_folder_native():
+        result = window.create_file_dialog(webview.FOLDER_DIALOG, allow_multiple=False)
+        if not result:
+            return None
+        selected = result[0] if isinstance(result, (list, tuple)) else result
+        return str(selected)
+    set_native_export_picker(_pick_export_folder_native)
 
     def _bootstrap() -> None:
         try:
@@ -455,6 +514,11 @@ def main() -> int:
         return 3
     if not _first_run_admin():
         return 0
+    try:
+        _ensure_local_security_files()
+    except Exception as exc:
+        _show_error(APP_TITLE, f'Không thể chuẩn bị khóa mã hóa cục bộ.\n\n{exc}')
+        return 4
 
     port, reserved_socket = _reserve_port(); url=f"http://127.0.0.1:{port}"
     try:

@@ -15,6 +15,7 @@ FORBIDDEN_FILES={
     'VERIFY_WEB_DATA.bat','run_web.py','run_web_background.py','web_service50.py',
     'RENDER_DEPLOY.md','ROUTER_API_SETUP.md',
     'webapi/routerapi69.py','webapi/static/routerapi69.js','webapi/static/routerapi70.js',
+    'webapi/kali63.py','webapi/static/kali63.js','webapi/static/hotfix9_kali_red.js',
 }
 
 
@@ -49,7 +50,7 @@ def verify(root:Path=ROOT):
     for p in dbroot.rglob('*') if dbroot.exists() else []:
         if p.is_file() and (p.suffix in {'.db','.lock','.db-wal','.db-shm'} or p.name in {'.credential.key','known_hosts'}):
             errors.append('RUNTIME_DATABASE_SHIPPED: '+p.relative_to(root).as_posix())
-    required=['desktop_launcher.py','webapi/desktop70.py','webapi/static/desktop70.js','NetworkAutomationDesktop.spec','installer/NetworkAutomation.iss','QA_DESKTOP_GATE.py','MO_APP_NETWORKAUTOMATION.vbs','00_MO_APP_NETWORKAUTOMATION.vbs','_internal/launcher/START_DESKTOP_CORE.bat','START_HERE.txt','requirements-lock.txt','requirements-dev.txt']
+    required=['desktop_launcher.py','webapi/desktop70.py','webapi/static/desktop70.js','NetworkAutomationDesktop.spec','installer/NetworkAutomation.iss','QA_DESKTOP_GATE.py','MO_APP_NETWORKAUTOMATION.vbs','00_MO_APP_NETWORKAUTOMATION.vbs','_internal/launcher/START_DESKTOP_CORE.bat','START_HERE.txt','requirements-lock.txt','requirements-dev.txt','webapi/windows_tools79.py','webapi/static/windows_tools79.js','webapi/static/i18n84.js']
     for name in required:
         if name not in data['files']: errors.append('REQUIRED_NOT_MANIFESTED: '+name)
     return {'ok':not errors,'version':'7.0.3','checked':checked,'errors':errors}

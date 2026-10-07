@@ -156,7 +156,7 @@ def feature_audit(request: Request):
     features.extend([
         _feature('Database','PASS' if db_ok else 'FAIL','quick_check = '+('ok' if db_ok else 'failed'),'Repair DB before operation' if not db_ok else ''),
         _feature('Application runtime','PASS' if fastapi_ok and uvicorn_ok and writable else 'FAIL',f'FastAPI={fastapi_ok}; Uvicorn={uvicorn_ok}; data directory writable={writable}.','Run OneClick as Administrator / repair Python dependencies' if not (fastapi_ok and uvicorn_ok and writable) else ''),
-        _feature('Đăng nhập / MFA','PASS' if auth_ok else 'FAIL',f"users={counts['web_users']}; session table={'ready' if counts['web_sessions']>=0 else 'missing'}; credential key={key_ok}.",'Repair Admin/login data before operation' if not auth_ok else ''),
+        _feature('Đăng nhập cục bộ','PASS' if auth_ok else 'FAIL',f"users={counts['web_users']}; session table={'ready' if counts['web_sessions']>=0 else 'missing'}; credential key={key_ok}.",'Repair Admin/login data before operation' if not auth_ok else ''),
         _feature('Dashboard / NOC','PASS','Freshness-aware device state and LAN path classification.'),
         _feature('Device Manager','PASS',f'{inventory} inventory / {managed} managed devices.'),
         _feature('IP / MAC + File Import','READY' if openpyxl_ok else 'WARN',f'{ipmac} records; CSV/TXT import ready; XLSX dependency={openpyxl_ok}; scan results={counts["scan_results"]}; connected evidence={counts["connected_evidence"]}.','Install openpyxl for XLSX import' if not openpyxl_ok else ''),

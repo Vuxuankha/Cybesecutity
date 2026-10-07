@@ -3,7 +3,7 @@
 The checklist aggregates operational/security work. 6.9 adds an optional background
 "safe auto-complete" mode. It runs bounded read/refresh/maintenance actions, records
 what was checked, and only marks an item AUTO DONE when the underlying condition is
-actually clear. It never closes alerts/cases, changes credentials/MFA, remediates
+actually clear. It never closes alerts/cases, changes credentials, remediates
 vulnerabilities, restores configs, deletes assets, or writes remote configuration.
 """
 from __future__ import annotations
@@ -149,7 +149,7 @@ def _auto_payload() -> dict:
         'latest': latest_d,
         'safety': {
             'automatic_checks': ['Presence', 'LAN discovery', 'Alert Rules', 'Incident/RCA sync', 'Line quality', 'Database backup'],
-            'manual_only': ['Resolve/close alert', 'Close SOC case', 'Vulnerability remediation/scan', 'MFA enrollment', 'Endpoint firewall/antivirus changes', 'Credential/config/restore/delete actions'],
+            'manual_only': ['Resolve/close alert', 'Close SOC case', 'Vulnerability remediation/scan', 'Endpoint firewall/antivirus changes', 'Credential/config/restore/delete actions'],
         },
     }
 
@@ -198,10 +198,6 @@ def build_daily_summary(username: str = '') -> dict:
             backup_fail += _count(c, "SELECT COUNT(*) FROM scheduled_tasks WHERE enabled=1 AND LOWER(COALESCE(task_type,'')) LIKE '%backup%' AND COALESCE(last_status,'')!='' AND UPPER(COALESCE(last_status,'')) NOT IN ('OK','PASS','SUCCESS','COMPLETED','WAITING','QUEUED')")
         tasks.append(_task('backup_failures', 'Backup task cần kiểm tra', backup_fail, 'HIGH', 'backup', 'Tự động tạo DB backup an toàn; backup cấu hình lỗi vẫn cần kiểm tra.'))
 
-        mfa_missing = 0
-        if _table_exists(c, 'app_users'):
-            mfa_missing = _count(c, "SELECT COUNT(*) FROM app_users WHERE COALESCE(enabled,1)=1 AND COALESCE(mfa_enabled,0)=0")
-        tasks.append(_task('mfa_missing', 'Tài khoản đang hoạt động chưa bật MFA', mfa_missing, 'HIGH', 'secpost51', 'MFA không thể bật thay người dùng; cần enroll thủ công.'))
 
         endpoint_offline = 0
         endpoint_risk = 0
@@ -334,7 +330,7 @@ def run_daily_auto_once(actor_id: int, username: str) -> dict:
         'failed_steps': failed_steps,
         'completed_categories': len(completed_keys),
         'pending_categories': len(pending_keys),
-        'safety': 'No alert/case closure, no vulnerability remediation, no MFA/credential/config/delete/restore action.',
+        'safety': 'No alert/case closure, no vulnerability remediation, no credential/config/delete/restore action.',
     }
     with connection() as c:
         c.execute('''INSERT INTO daily_auto57_runs(

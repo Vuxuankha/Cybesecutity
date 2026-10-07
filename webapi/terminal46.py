@@ -18,6 +18,7 @@ import shutil
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Literal
@@ -446,7 +447,9 @@ def readiness_data():
             'database_check':check,'managed_devices':count,'enabled_accounts':accounts,
             'ping_available':bool(shutil.which('ping')),'libraries':libs,
             'known_hosts_present':(DATABASE_DIR/'known_hosts').is_file(),
+            'known_hosts_status':'Sẵn sàng' if (DATABASE_DIR/'known_hosts').is_file() else 'Chưa khởi tạo',
             'credential_key_present':(DATABASE_DIR/'.credential.key').is_file(),
+            'credential_key_status':'Sẵn sàng' if (DATABASE_DIR/'.credential.key').is_file() else 'Thiếu khóa - cần khôi phục hoặc khởi tạo an toàn',
             'free_disk_bytes':shutil.disk_usage(DATA_DIR).free,
             'terminal':{'ssh':bool(libs['paramiko']),'telnet':True,'admin_only':True},
             'auto_refresh':'in-place; paused while editing; no page reload',
@@ -463,9 +466,11 @@ def readiness(request:Request):
     return d
 
 
-@router.get('/diagnostics/export')
+@router.post('/diagnostics/export')
 def export_diagnostics(request:Request):
-    security37.require_role(request,'Admin')
-    # Intentionally no IP list, usernames, config, secrets, raw errors or absolute paths.
-    return Response(json.dumps(readiness_data(),ensure_ascii=False,indent=2),media_type='application/json',
-                    headers={'Content-Disposition':'attachment; filename="NetworkAutomation_diagnostics.json"'})
+    u=security37.require_role(request,'Admin')
+    from app_runtime import REPORT_DIR
+    from webapi.reports37 import register
+    path=Path(REPORT_DIR)/('diagnostics_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.json')
+    path.write_text(json.dumps(readiness_data(),ensure_ascii=False,indent=2),encoding='utf-8')
+    return register(path,u['id'],'report')

@@ -66,7 +66,7 @@ def backup_before_release(database_path, resource_dir, version=None):
             final = backups / f"pre_app_v{version}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
             pending.rename(final)
             temporary_marker = base / f'.release_backup_{version}.tmp'
-            temporary_marker.write_text(json.dumps({'backup': str(final)}), encoding='utf-8')
+            temporary_marker.write_text(json.dumps({'backup': str(final.relative_to(base))}), encoding='utf-8')
             os.replace(temporary_marker, marker)
             return final
         except Exception:

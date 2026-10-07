@@ -6,9 +6,9 @@ HTML=(ROOT/'webapi/static/index.html').read_text(encoding='utf-8')
 
 def test_two_separate_security_groups_are_present():
     assert 'HACKER MŨ TRẮNG · PHÒNG THỦ' in JS
-    assert 'HACKER MŨ ĐEN · LAB CÔ LẬP' in JS
+    assert 'HACKER MŨ ĐỎ · LAB CÔ LẬP' in JS
     assert "['🛡 HACKER MŨ TRẮNG · PHÒNG THỦ',white]" in JS
-    assert "['🥷 HACKER MŨ ĐEN · LAB CÔ LẬP',red]" in JS
+    assert "['🥷 HACKER MŨ ĐỎ · LAB CÔ LẬP',red]" in JS
 
 def test_white_hat_pages_include_requested_defensive_areas():
     for page in ['scan','ipmac','vuln51','blueweb61','bluelog61','bluepass61','siem51','threat54','endpoint58']:
@@ -17,8 +17,8 @@ def test_white_hat_pages_include_requested_defensive_areas():
 def test_red_team_is_simulation_only_and_has_all_requested_categories():
     for page in ['redinject61','redxss61','redauth61','redpacket61','redidor61','redload61']:
         assert page in JS
-    assert "red_team_mode:'simulation-only'" in JS
-    assert 'không gửi payload tấn công' in JS.lower()
+    assert "red_team_mode:'authorized-bounded-diagnostics'" in JS
+    assert 'không exploit' in JS.lower()
     assert 'không brute-force tài khoản' in JS.lower()
     assert 'không bắt gói từ card mạng' in JS.lower()
     assert 'không tạo flood/ddos' in JS.lower()

@@ -204,3 +204,19 @@ def network_overview(request: Request, probe: bool = True, force: bool = False):
     if probe and user['role']=='Viewer':
         raise HTTPException(403,'PERMISSION_DENIED: Viewer cannot initiate network probes')
     return network_overview_data(probe=probe, force=force)
+
+
+@router.post("/export-directory")
+def choose_export_directory_http(request: Request):
+    """Open the Desktop-native export directory chooser.
+
+    This HTTP bridge deliberately avoids reliance on window.pywebview.api,
+    which can be late or absent after navigation in some WebView2 setups.
+    """
+    _desktop_only()
+    security37.require_role(request, 'Admin', 'Analyst', 'Operator')
+    from desktop_export import choose_export_directory
+    result = choose_export_directory()
+    if result.get('error'):
+        raise HTTPException(503, result['error'])
+    return result

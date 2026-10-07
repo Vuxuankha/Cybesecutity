@@ -3,10 +3,10 @@ ROOT=Path(__file__).resolve().parents[1]
 JS=(ROOT/'webapi/static/security_catalog62.js').read_text(encoding='utf-8')
 HTML=(ROOT/'webapi/static/index.html').read_text(encoding='utf-8')
 
-def test_catalog_exposes_exact_35_feature_architecture():
-    assert "white_features:17" in JS
-    assert "red_lab_features:18" in JS
-    assert "total_features:35" in JS
+def test_catalog_exposes_windows_native_plus_35_feature_architecture():
+    assert "white_features:18" in JS
+    assert "red_lab_features:19" in JS
+    assert "total_features:37" in JS
     for n in range(1,18): assert f'{n}. ' in JS
     for n in range(18,36): assert f'{n}. ' in JS
 
@@ -17,7 +17,7 @@ def test_white_hat_new_modules_present():
 def test_red_lab_advanced_modules_present_and_simulation_only():
     for page in ['redupload62','redredirect62','redssrf62','redxxe62','redhash62','redsupply62','redsession62','redmitm62','redtunnel62','redprivesc62','redpersist62','redevasion62']:
         assert page in JS
-    assert "red_team_mode:'simulation-only'" in JS
+    assert "red_team_mode:'authorized-bounded-diagnostics'" in JS
     assert 'không phát payload' in JS.lower()
     assert 'không tạo tunnel' in JS.lower()
     assert 'không tạo scheduled task' in JS.lower()

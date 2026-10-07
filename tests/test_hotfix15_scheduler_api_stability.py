@@ -114,12 +114,10 @@ def test_security_close_initializes_table_before_lookup(monkeypatch):
     assert exc.value.status_code == 404
 
 
-def test_mfa_reset_missing_user_returns_404(monkeypatch):
-    monkeypatch.setattr(cybersecurity51,'require_role',lambda request,*roles:{'username':'Admin','role':'Admin'})
-    monkeypatch.setattr(security37,'reset_mfa',lambda user_id:False)
-    with pytest.raises(HTTPException) as exc:
-        cybersecurity51.admin_reset_mfa(999,None)
-    assert exc.value.status_code == 404
+def test_mfa_reset_surface_removed():
+    assert not hasattr(cybersecurity51,'admin_reset_mfa')
+    src=open('webapi/security37.py',encoding='utf-8').read()
+    assert "r'/api/v51/auth/mfa/reset" not in src
 
 
 def test_only_one_request_validation_handler_is_registered_in_source():

@@ -1,29 +1,29 @@
 from pathlib import Path
-
 ROOT=Path(__file__).resolve().parents[1]
-JS=(ROOT/'webapi/static/hotfix9_kali_red.js').read_text(encoding='utf-8')
-PYK=(ROOT/'webapi/kali63.py').read_text(encoding='utf-8')
-IDX=(ROOT/'webapi/static/index.html').read_text(encoding='utf-8')
+BACK=(ROOT/'webapi/windows_tools79.py').read_text(encoding='utf-8')
+JS=(ROOT/'webapi/static/windows_tools79.js').read_text(encoding='utf-8')
+NAV=(ROOT/'webapi/static/hotfix10_nav_core.js').read_text(encoding='utf-8')
+LOADER=(ROOT/'webapi/static/app.js').read_text(encoding='utf-8')
 
-def test_two_security_groups_are_authoritative():
-    assert '🛡 HACKER MŨ TRẮNG · PHÒNG THỦ' in JS
-    assert '🥷 HACKER MŨ ĐEN · RED TEAM LAB' in JS
-    assert 'installGroups' in JS
-    assert 'window.addEventListener(\'load\',installGroups' in JS
 
-def test_safe_kali_red_profiles_only():
-    for p in ['session_cookie_audit','tls_transport_audit','component_versions','http_capacity_probe','worker_network_state']:
-        assert p in JS and p in PYK
-    banned=['hydra ','sqlmap ','metasploit ','msfconsole ','chisel ','ettercap ','hping3 ','nmap --script vuln']
-    low=(JS+'\n'+PYK).lower()
-    for token in banned:
-        assert token not in low
+def test_navigation_uses_windows_local_centers_and_no_kali_config_page():
+    assert 'wintools79' in NAV and 'redlocal79' in NAV
+    assert 'kaliconfig63' not in NAV and 'kali63' not in NAV
+    assert 'HACKER MŨ ĐỎ · RED TEAM LAB' in NAV
 
-def test_capacity_probe_is_bounded():
-    assert ('range(10)' in PYK) or ('i -lt 10' in PYK)
-    assert ('time.sleep(0.2)' in PYK) or ('sleep 0.2' in PYK)
-    assert '10 request tuần tự' in JS
 
-def test_hotfix9_loaded_after_kali():
-    loader=(ROOT/'webapi/static/app.js').read_text(encoding='utf-8')
-    assert loader.index("'kali63.js'") < loader.index("'hotfix9_kali_red.js'")
+def test_red_windows_profiles_are_bounded_safe_diagnostics():
+    allowed=['red_recon','red_config_audit','red_connectivity','red_http_headers','red_tls_audit','red_cookie_audit','red_network_state','red_light_load']
+    for profile in allowed:
+        assert profile in BACK and profile in JS
+    assert "le=5" in BACK
+    assert "Start-Sleep -Milliseconds 250" in BACK
+    forbidden=['exploit','metasploit','mimikatz','credential_dump','persistence_install','reverse_shell']
+    low=BACK.lower()
+    for item in forbidden:
+        assert f"'{item}'" not in low
+
+
+def test_windows_asset_loaded_after_security_catalog():
+    assert LOADER.index("naLoadScript('security_catalog62.js')") < LOADER.index("naLoadScript('windows_tools79.js')")
+    assert 'hotfix9_kali_red.js' not in LOADER

@@ -136,7 +136,7 @@ def _wan_probe(timeout=1.5):
     return False,attempts
 
 
-def network_connectivity(force=False):
+def network_connectivity(force=False, probe_wan=True):
     now=time.time()
     with _NETWORK_CACHE_LOCK:
         cached=_NETWORK_CACHE.get('result')
@@ -155,7 +155,10 @@ def network_connectivity(force=False):
                 elif addr.is_private: private.append(value)
             except ValueError: pass
     lan=bool(private)
-    wan,attempts=_wan_probe()
+    if probe_wan:
+        wan,attempts=_wan_probe()
+    else:
+        wan=False;attempts=[]
     if wan and lan: mode='LAN+WAN'
     elif wan: mode='WAN'
     elif lan: mode='LAN_ONLY'
@@ -176,9 +179,14 @@ def network_connectivity(force=False):
 
 
 @router.get('/network/connectivity')
-def network_status(request:Request, force:bool=False):
+def network_status(request:Request):
     require_role(request)
-    return network_connectivity(force=force)
+    return network_connectivity(force=True, probe_wan=False)
+
+@router.post('/network/connectivity/probe')
+def network_probe(request:Request):
+    require_role(request,'Admin','Operator')
+    return network_connectivity(force=True, probe_wan=True)
 
 
 def _primary_identity_from_connectivity(result: dict) -> dict:
@@ -258,9 +266,20 @@ def network_identity_status(force=False) -> dict:
             'startup_adapter':last.get('adapter',''),'startup_observed_at':last.get('observed_at',''),'source':'WINDOWS_LOCAL'}
 
 @router.get('/network/identity')
-def network_identity(request:Request, force:bool=False):
+def network_identity(request:Request):
     require_role(request)
-    return network_identity_status(force=force)
+    current=network_connectivity(force=True, probe_wan=False)
+    ident=_primary_identity_from_connectivity(current)
+    ensure_network_identity_table()
+    with connection() as c: row=c.execute('SELECT * FROM web_network_identity_history ORDER BY id DESC LIMIT 1').fetchone()
+    last=dict(row) if row else {}
+    changed=bool(last and (last.get('ipv4')!=ident['ipv4'] or last.get('network')!=ident['network'] or last.get('adapter')!=ident['adapter']))
+    return {**ident,'mode':current.get('mode') or 'OFFLINE','checked_at':current.get('checked_at'),'changed_since_start':changed,'startup_ipv4':last.get('ipv4',''),'startup_network':last.get('network',''),'startup_adapter':last.get('adapter',''),'startup_observed_at':last.get('observed_at',''),'source':'WINDOWS_LOCAL'}
+
+@router.post('/network/identity/refresh')
+def network_identity_refresh(request:Request):
+    require_role(request,'Admin','Operator')
+    return record_network_identity(reason='manual-refresh',force=True)
 
 @router.get('/about')
 def about(request:Request):

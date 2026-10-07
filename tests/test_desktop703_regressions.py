@@ -205,10 +205,10 @@ def test_static_assets_use_new_revision_and_no_immutable_cache():
     index = text("webapi/static/index.html")
     security = text("webapi/security37.py")
     runtime = text("webapi/runtime37.py")
-    assert "NA_ASSET_VERSION='70391'" in app
-    assert "/static/app.js?v=70391" in index
-    assert "/static/style.css?v=70391" in index
-    assert "ASSET_VERSION='70391'" in runtime
+    assert "NA_ASSET_VERSION='70405'" in app
+    assert "/static/app.js?v=70405" in index
+    assert "/static/style.css?v=70405" in index
+    assert "ASSET_VERSION='70405'" in runtime
     assert "max-age=31536000, immutable" not in security
     assert "no-store, max-age=0" in security
 
@@ -230,10 +230,11 @@ def test_unknown_ui_actions_are_not_silent_and_line_optimize_is_wired():
     assert "confirm_system_change:true" in cyber
 
 
-def test_initial_login_bundle_contains_working_mfa_flow():
+def test_initial_login_bundle_is_password_only_without_mfa_flow():
     app = text("webapi/static/app.js")
-    assert "MFA_FLOW_HANDLER_NOT_READY" not in app
-    assert "'mfa-login-form':async" in app
-    assert "r.mfa_enroll_required" in app
-    assert "r.mfa_required" in app
-    assert "'/auth/mfa/verify'" in app
+    main = text("webapi/main.py")
+    assert "'mfa-login-form':async" not in app
+    assert "r.mfa_enroll_required" not in app
+    assert "r.mfa_required" not in app
+    assert "'/auth/mfa/verify'" not in app
+    assert "@app.post('/api/auth/mfa/verify')" not in main

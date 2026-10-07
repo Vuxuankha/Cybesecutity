@@ -35,7 +35,7 @@ api = async function(path,options={}) {
    // Validation replies may contain input values: never stringify those values.
    const detail=typeof d.detail==='string'?d.detail:Array.isArray(d.detail)?d.detail.map(x=>(x.loc||[]).join('.')+': '+x.msg).join('; '):'API_ERROR';
    fault47('HTTP_'+r.status,{request_id:requestId,method});
-   if(r.status===401&&path!=='/auth/login'&&path!=='/auth/mfa/verify')await naConfirmSessionAfter401(path);
+   if(r.status===401&&path!=='/auth/login')await naConfirmSessionAfter401(path);
    const err=new Error(detail+(requestId?' [ref '+requestId+']':''));err.httpStatus=r.status;throw err;
   }
   return d;
@@ -84,7 +84,7 @@ Object.assign(actions,{
  'device-terminal47':async b=>{const id=Number(b.dataset.id);await go('terminal');const f=$('#terminal-connect-form');if(f){f.elements.device_id.value=String(id);f.elements.device_id.dispatchEvent(new Event('change',{bubbles:true}));toast('Thi\u1ebft b\u1ecb \u0111\u00e3 ch\u1ecdn. Ki\u1ec3m tra giao th\u1ee9c v\u00e0 x\u00e1c nh\u1eadn tr\u01b0\u1edbc khi k\u1ebft n\u1ed1i.');}},
  'device-monitor47':async b=>{state.monitorDevice=Number(b.dataset.id);await go('monitoringx');},
  'ping-history47':async()=>{const runs=await api('/v47/ping-runs');modal('50 l\u1ea7n ch\u1ea1y Ping g\u1ea7n nh\u1ea5t',grid45(runs,[['B\u1eaft \u0111\u1ea7u','started_at'],['Tr\u1ea1ng th\u00e1i','status',badge],['Chu k\u1ef3','cycle'],['\u0110\u00e3 x\u1eed l\u00fd','done'],['T\u1ed5ng','total'],['K\u1ebft th\u00fac','finished_at'],['Ghi ch\u00fa','message']],null,'ping-runs47-grid'));},
- 'diagnostics47':async()=>{const r=await api('/v47/diagnostics/export');r.browser={faults:ops47.faults,refresh_updates:refresh46.updates,refresh_skipped:refresh46.skipped,refresh_failures:refresh46.failures,viewport:{width:innerWidth,height:innerHeight},ui:'4.7.0'};download45(JSON.stringify(r,null,2),'NetworkAutomation-diagnostics.json','application/json');},
+ 'diagnostics47':async()=>{const r=await api('/v47/diagnostics/export',{method:'POST',body:'{}'});toast('Đã xuất chẩn đoán: '+(r.saved_relative_path||r.filename||''));modal('Xuất chẩn đoán',`<div class=\"notice\">${esc(r.saved_relative_path||r.filename||'Đã tạo file')}</div>`)},
  'ack47':async b=>{await api('/v47/inbox/'+b.dataset.id+'/ack',{method:'POST',body:'{}'});await go('inbox47');},
  'silence47':async b=>{modal('T\u1ea1m \u1ea9n c\u1ea3nh b\u00e1o Ping',note47('Ch\u1ec9 \u00e1p d\u1ee5ng h\u1ed9p c\u1ea3nh b\u00e1o Ping c\u1ee7a \u1ee9ng d\u1ee5ng. Kh\u00f4ng d\u1eebng \u0111o, kh\u00f4ng \u0111\u1ed5i email/Telegram hay c\u1ea3nh b\u00e1o c\u0169.')+form('silence47-form',`<input type="hidden" name="scope" value="${b.dataset.ip?'ip':'all'}"><input type="hidden" name="ip" value="${esc(b.dataset.ip||'')}">`+input('Th\u1eddi gian (ph\u00fat, 1\u201310080)','minutes','number',60)+input('L\u00fd do','reason','text',''),'X\u00e1c nh\u1eadn'));},
  'unsilence47':async b=>{await api('/v47/silences/'+b.dataset.id,{method:'DELETE'});await go('inbox47');},

@@ -11,7 +11,7 @@ import uuid
 VERSION='5.9.2-cybersecurity'
 UI_VERSION='7.0.3'
 RELEASE='Desktop 7.0.3 Desktop Only'
-ASSET_VERSION='70391'
+ASSET_VERSION='70405'
 SERVICE = 'networkautomation-desktop'
 MIGRATION_MARKER = '.desktop_migration_37.json'
 LEGACY_MIGRATION_MARKERS = ('.desktop_migration.json', '.web_migration_37.json')
@@ -40,11 +40,15 @@ def sqlite_snapshot(source: Path, destination: Path):
     fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     os.close(fd)
     try:
-        with sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True) as src:
-            with sqlite3.connect(destination) as dst:
-                src.backup(dst, pages=256)
-                if dst.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
-                    raise RuntimeError('Backup quick_check failed')
+        src = sqlite3.connect(source.resolve().as_uri() + '?mode=ro', uri=True)
+        dst = sqlite3.connect(destination)
+        try:
+            src.backup(dst, pages=256)
+            if dst.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                raise RuntimeError('Backup quick_check failed')
+        finally:
+            dst.close()
+            src.close()
     except Exception:
         destination.unlink(missing_ok=True)
         raise
@@ -83,7 +87,8 @@ def preflight():
         raise RuntimeError('Database not found. Start NetworkAutomation Desktop normally so the local data folder can be initialized.')
     if not path.exists():
         return None
-    with sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True) as c:
+    c = sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True)
+    try:
         if c.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
             raise RuntimeError('Database quick_check failed. Restore a known-good Desktop backup before continuing.')
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -101,6 +106,8 @@ def preflight():
                 if str(key).endswith('_enc') and value:encrypted=True
         if encrypted and not (Path(DATABASE_DIR)/'.credential.key').is_file():
             raise RuntimeError('Encrypted credentials exist but .credential.key is missing. Restore the original key; do not generate a replacement.')
+    finally:
+        c.close()
     marker = Path(DATABASE_DIR)/MIGRATION_MARKER
     legacy_markers = [Path(DATABASE_DIR)/name for name in LEGACY_MIGRATION_MARKERS]
     if not marker.exists() and not any(p.exists() for p in legacy_markers):

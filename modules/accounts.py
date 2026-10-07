@@ -7,9 +7,8 @@ from modules.nms_v6 import ensure_v6_tables
 
 ROLES = ('Admin', 'Analyst', 'Operator', 'Viewer')
 PUBLIC_FIELDS = ('id', 'username', 'role', 'enabled', 'created_at', 'updated_at')
-PASSWORD_MIN_LENGTH = 12
+PASSWORD_MIN_LENGTH = 1
 PASSWORD_MAX_LENGTH = 512
-WEAK_PASSWORD_TOKENS = ('password', '123456', 'qwerty', 'admin', 'letmein', 'welcome', 'networkautomation')
 
 
 def public_user(row):
@@ -19,17 +18,18 @@ def public_user(row):
 
 
 def validate_password(password: str) -> None:
+    """Desktop password policy: any non-empty value is accepted.
+
+    The maximum is still bounded to protect the local API/database from
+    accidental oversized input; no minimum length or complexity rule is
+    imposed by the application.
+    """
     if not isinstance(password, str):
         raise ValueError('Mật khẩu không hợp lệ.')
-    if not PASSWORD_MIN_LENGTH <= len(password) <= PASSWORD_MAX_LENGTH:
-        raise ValueError(f'Mật khẩu phải có {PASSWORD_MIN_LENGTH}–{PASSWORD_MAX_LENGTH} ký tự.')
-    classes = sum((any(c.islower() for c in password), any(c.isupper() for c in password),
-                   any(c.isdigit() for c in password), any(not c.isalnum() for c in password)))
-    if classes < 3:
-        raise ValueError('Mật khẩu phải kết hợp ít nhất 3 nhóm: chữ thường, chữ hoa, số, ký tự đặc biệt.')
-    lowered = password.lower()
-    if any(token in lowered for token in WEAK_PASSWORD_TOKENS):
-        raise ValueError('Mật khẩu chứa từ/cụm quá phổ biến. Hãy chọn mật khẩu khó đoán hơn.')
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise ValueError('Mật khẩu không được để trống.')
+    if len(password) > PASSWORD_MAX_LENGTH:
+        raise ValueError(f'Mật khẩu tối đa {PASSWORD_MAX_LENGTH} ký tự.')
 
 
 @contextmanager

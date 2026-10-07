@@ -184,7 +184,9 @@ def notification_logs(request: Request, limit: int = 300):
     limit = max(1, min(int(limit), 2000))
     with connection() as c:
         if not _table_exists(c,'notification_log'):
-            raise HTTPException(503,'NOTIFICATION_LOG_UNAVAILABLE')
+            # Clean installs have no notification log until the first delivery.
+            # An empty history is valid and must not make the page fail.
+            return []
         try:
             return [dict(r) for r in c.execute(
                 'SELECT id,event_key,channel,status,detail,created_at FROM notification_log ORDER BY id DESC LIMIT ?',
